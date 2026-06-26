@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <title>🌿 填满格子</title>
+    <style>
+      * { margin: 0; padding: 0; box-sizing: border-box; }
+
+      html, body {
+        width: 100%;
+        height: 100%;
+        overflow: hidden;
+        background: #1B5E20;
+        touch-action: none;
+        -webkit-tap-highlight-color: transparent;
+        user-select: none;
+        -webkit-user-select: none;
+        position: fixed;
+      }
+
+      #app {
+        width: 100%;
+        height: 100%;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background: linear-gradient(135deg, #1B5E20 0%, #2E7D32 60%, #388E3C 100%);
+      }
+
+      /*
+       * canvas 清晰度说明：
+       * Phaser Scale.FIT 会自动设置 canvas 的 width/height style 属性，
+       * 让它适应屏幕大小。我们不需要额外设置宽高，只需要：
+       * 1. 让 canvas 不被浏览器模糊处理（image-rendering）
+       * 2. 保持圆角和阴影视觉效果
+       *
+       * 注意：不要强制设置 width/height，会破坏 Phaser 的 Scale.FIT 逻辑
+       */
+      canvas {
+        display: block;
+        border-radius: 18px;
+        box-shadow: 0 16px 48px rgba(0, 0, 0, 0.45);
+        /* 防止浏览器对 canvas 进行双线性插值（让矢量图保持清晰） */
+        image-rendering: -webkit-optimize-contrast;
+        image-rendering: crisp-edges;
+      }
+    </style>
+    <script type="module" crossorigin src="/flow-puzzle-game/assets/index-CPJakCDp.js"></script>
+  </head>
+  <body>
+    <div id="app"></div>
+  </body>
+</html>
