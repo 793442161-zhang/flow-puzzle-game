@@ -12,7 +12,7 @@
         width: 100%;
         height: 100%;
         overflow: hidden;
-        background: #1B5E20;
+        background: #F0FDF4;
         touch-action: none;
         -webkit-tap-highlight-color: transparent;
         user-select: none;
@@ -23,10 +23,7 @@
       #app {
         width: 100%;
         height: 100%;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        background: linear-gradient(135deg, #1B5E20 0%, #2E7D32 60%, #388E3C 100%);
+        background: #F0FDF4;
       }
 
       /*
@@ -40,9 +37,7 @@
        */
       canvas {
         display: block;
-        border-radius: 18px;
-        box-shadow: 0 16px 48px rgba(0, 0, 0, 0.45);
-        /* 防止浏览器对 canvas 进行双线性插值（让矢量图保持清晰） */
+        /* Scale.RESIZE 模式下 canvas 自动撑满屏幕，不需要圆角 */
         image-rendering: -webkit-optimize-contrast;
         image-rendering: crisp-edges;
       }

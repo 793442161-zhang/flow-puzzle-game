@@ -20,14 +20,13 @@ import { GameScene } from './scenes/GameScene';
 
 const config: Phaser.Types.Core.GameConfig = {
   type: Phaser.CANVAS,
-  width: 390,
-  height: 844,
+  width: window.innerWidth,
+  height: window.innerHeight,
   backgroundColor: '#F0FDF4',
   scale: {
-    mode: Phaser.Scale.FIT,
-    autoCenter: Phaser.Scale.CENTER_BOTH,
-    width: 390,
-    height: 844,
+    mode: Phaser.Scale.RESIZE,
+    width: window.innerWidth,
+    height: window.innerHeight,
   },
   scene: [BootScene, MenuScene, GameScene],
   parent: 'app',
