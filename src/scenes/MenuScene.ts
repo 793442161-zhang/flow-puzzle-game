@@ -22,16 +22,23 @@ export class MenuScene extends Phaser.Scene {
   private drawBackground() {
     const { width, height } = this.scale;
     const bg = this.add.graphics();
-    bg.fillGradientStyle(0xE8F5E9, 0xE8F5E9, 0xF1F8E9, 0xF1F8E9, 1);
+
+    // 纯色背景（浅绿白）
+    bg.fillStyle(0xF2FAF2, 1);
     bg.fillRect(0, 0, width, height);
 
-    // 装饰气泡
+    // 顶部柔和色块
+    bg.fillStyle(0xDFF0DE, 1);
+    bg.fillRect(0, 0, width, height * 0.45);
+
+    // 装饰气泡 - 更大更明显
     const bubbles = [
-      { x: -40, y: 60, r: 100, color: 0xC8E6C9, a: 0.3 },
-      { x: width + 30, y: 120, r: 80, color: 0xB2DFDB, a: 0.25 },
-      { x: width * 0.6, y: height - 60, r: 90, color: 0xDCEDC8, a: 0.22 },
-      { x: 30, y: height * 0.6, r: 60, color: 0xF0F4C3, a: 0.28 },
-      { x: width * 0.85, y: height * 0.4, r: 50, color: 0xC8E6C9, a: 0.2 },
+      { x: -50, y: 80, r: 120, color: 0xA5D6A7, a: 0.25 },
+      { x: width + 40, y: 150, r: 100, color: 0x80CBC4, a: 0.2 },
+      { x: width * 0.7, y: height * 0.88, r: 110, color: 0xC5E1A5, a: 0.2 },
+      { x: 20, y: height * 0.65, r: 75, color: 0xE6EE9C, a: 0.22 },
+      { x: width * 0.88, y: height * 0.38, r: 60, color: 0xA5D6A7, a: 0.18 },
+      { x: width * 0.15, y: height * 0.35, r: 40, color: 0xB2DFDB, a: 0.15 },
     ];
     bubbles.forEach(b => {
       bg.fillStyle(b.color, b.a);
@@ -44,104 +51,116 @@ export class MenuScene extends Phaser.Scene {
     const { width, height } = this.scale;
 
     // ── Logo 区域 ──
-    const logoY = height * 0.22;
+    const logoY = height * 0.2;
 
-    // 图标装饰圆
+    // 外光晕
     const iconBg = this.add.graphics();
-    iconBg.fillStyle(0x66BB6A, 0.15);
-    iconBg.fillCircle(width / 2, logoY - 20, 54);
-    iconBg.fillStyle(0x66BB6A, 0.08);
-    iconBg.fillCircle(width / 2, logoY - 20, 70);
+    iconBg.fillStyle(0x43A047, 0.08);
+    iconBg.fillCircle(width / 2, logoY, 80);
+    iconBg.fillStyle(0x43A047, 0.13);
+    iconBg.fillCircle(width / 2, logoY, 58);
+    // 图标底座
+    iconBg.fillStyle(0xFFFFFF, 0.6);
+    iconBg.fillCircle(width / 2, logoY, 44);
 
-    this.add.text(width / 2, logoY - 20, '🌿', { fontSize: '56px' })
+    this.add.text(width / 2, logoY, '🌿', { fontSize: '52px' })
       .setOrigin(0.5);
 
-    this.add.text(width / 2, logoY + 52, '填满格子', {
+    this.add.text(width / 2, logoY + 64, '填满格子', {
       fontFamily: '"PingFang SC", "Microsoft YaHei", sans-serif',
-      fontSize: '34px',
+      fontSize: '36px',
       fontStyle: 'bold',
-      color: '#2E7D32',
+      color: '#1B5E20',
     }).setOrigin(0.5);
 
-    this.add.text(width / 2, logoY + 90, 'Fill The Grid · 益智解谜', {
+    this.add.text(width / 2, logoY + 104, 'Fill The Grid · 益智解谜', {
       fontFamily: '"PingFang SC", sans-serif',
-      fontSize: '15px',
-      color: '#81C784',
+      fontSize: '14px',
+      color: '#66BB6A',
+      letterSpacing: 1,
     }).setOrigin(0.5);
 
     // ── 进度展示 ──
-    const progressY = height * 0.47;
+    const progressY = height * 0.46;
     const completed = progress.completedLevels.length;
     const total = LEVELS.length;
 
-    // 进度卡片
+    // 进度卡片阴影
     const cardG = this.add.graphics();
-    const cardW = Math.min(width - 60, 300);
-    const cardH = 72;
+    const cardW = Math.min(width - 48, 320);
+    const cardH = 78;
     const cardX = (width - cardW) / 2;
-    cardG.fillStyle(0xFFFFFF, 0.88);
+
+    // 阴影层
+    cardG.fillStyle(0x2E7D32, 0.08);
+    cardG.fillRoundedRect(cardX + 3, progressY - cardH / 2 + 6, cardW, cardH, 20);
+    // 卡片白底
+    cardG.fillStyle(0xFFFFFF, 0.96);
     cardG.fillRoundedRect(cardX, progressY - cardH / 2, cardW, cardH, 20);
+    // 卡片边框
+    cardG.lineStyle(1.5, 0xC8E6C9, 1);
+    cardG.strokeRoundedRect(cardX, progressY - cardH / 2, cardW, cardH, 20);
+    // 左侧绿色装饰条
+    cardG.fillStyle(0x43A047, 1);
+    cardG.fillRoundedRect(cardX + 1, progressY - cardH / 2 + 14, 4, cardH - 28, 2);
 
     // 进度条
     const barPad = 20;
     const barW = cardW - barPad * 2;
-    const barH = 8;
+    const barH = 7;
     const barX = cardX + barPad;
-    const barY = progressY + 14;
-    cardG.fillStyle(0xE8F5E9, 1);
+    const barY = progressY + 18;
+    cardG.fillStyle(0xEEF5EE, 1);
     cardG.fillRoundedRect(barX, barY, barW, barH, 4);
     const fillRatio = total > 0 ? completed / total : 0;
     if (fillRatio > 0) {
-      cardG.fillStyle(0x66BB6A, 1);
+      cardG.fillStyle(0x43A047, 1);
       cardG.fillRoundedRect(barX, barY, barW * fillRatio, barH, 4);
     }
 
-    this.add.text(width / 2, progressY - 12, `⭐ ${progress.stars} 星  ·  已通关 ${completed} / ${total}`, {
+    this.add.text(width / 2, progressY - 10, `⭐ ${progress.stars} 星  ·  已通关 ${completed} / ${total}`, {
       fontFamily: '"PingFang SC", sans-serif',
       fontSize: '16px',
       fontStyle: 'bold',
-      color: '#2E7D32',
+      color: '#1B5E20',
     }).setOrigin(0.5);
 
     // ── 按钮区域 ──
-    const btnAreaY = height * 0.65;
-    const btnW = Math.min(width - 60, 280);
+    const btnAreaY = height * 0.64;
+    const btnW = Math.min(width - 48, 300);
 
     // 找到当前应该继续的关卡（最新未完成或第一关）
     const nextLevelIndex = this.getNextLevelIndex(progress);
 
     // 主按钮：继续游戏 / 开始游戏
-    const mainLabel = completed > 0 ? `继续游戏  第 ${nextLevelIndex + 1} 关 ▶` : '开始游戏  ▶';
+    const mainLabel = completed > 0 ? `继续游戏  第 ${nextLevelIndex + 1} 关  ▶` : '开始游戏  ▶';
     const mainBtn = this.createBigBtn(
       width / 2, btnAreaY,
-      btnW, 64,
-      mainLabel, 0x43A047, 0x66BB6A,
+      btnW, 62,
+      mainLabel,
       () => {
         this.scene.start('GameScene', { levelIndex: nextLevelIndex });
       }
     );
 
     // 次按钮：选择关卡
-    const selectBtn = this.createBigBtn(
-      width / 2, btnAreaY + 86,
-      btnW, 56,
+    const selectBtn = this.createOutlineBtn(
+      width / 2, btnAreaY + 84,
+      btnW, 54,
       '📋  选择关卡',
-      0xFFFFFF, 0xFFFFFF,
       () => this.openLevelPanel(),
-      '#2E7D32',
-      true  // outlined style
     );
 
     // 进场动画
     [mainBtn, selectBtn].forEach((btn, i) => {
       btn.setAlpha(0);
-      btn.y += 30;
+      btn.y += 24;
       this.tweens.add({
         targets: btn,
         alpha: 1,
-        y: btn.y - 30,
-        duration: 350,
-        delay: 200 + i * 100,
+        y: btn.y - 24,
+        duration: 380,
+        delay: 180 + i * 90,
         ease: 'Back.easeOut',
       });
     });
@@ -160,41 +179,40 @@ export class MenuScene extends Phaser.Scene {
     });
   }
 
-  // ─── 大按钮 ───────────────────────────────────────────────────────────────────
+  // ─── 主按钮（鲜艳实心绿） ──────────────────────────────────────────────────────
   private createBigBtn(
     x: number, y: number,
     w: number, h: number,
     label: string,
-    colorFrom: number, colorTo: number,
     callback: () => void,
-    textColor = '#FFFFFF',
-    outlined = false
   ): Phaser.GameObjects.Container {
     const btn = this.add.container(x, y);
+    const r = h / 2;
 
+    // 投影（偏绿色阴影，更自然）
     const shadow = this.add.graphics();
-    shadow.fillStyle(0x000000, 0.1);
-    shadow.fillRoundedRect(-w / 2 + 2, -h / 2 + 4, w, h, h / 2);
+    shadow.fillStyle(0x2E7D32, 0.28);
+    shadow.fillRoundedRect(-w / 2 + 3, -h / 2 + 6, w, h, r);
 
+    // 按钮主体（深绿底色）
     const bg = this.add.graphics();
-    if (outlined) {
-      bg.fillStyle(0xFFFFFF, 0.92);
-      bg.fillRoundedRect(-w / 2, -h / 2, w, h, h / 2);
-      bg.lineStyle(2.5, 0x81C784, 1);
-      bg.strokeRoundedRect(-w / 2, -h / 2, w, h, h / 2);
-    } else {
-      bg.fillGradientStyle(colorFrom, colorTo, colorFrom, colorTo, 1);
-      bg.fillRoundedRect(-w / 2, -h / 2, w, h, h / 2);
-      // 高光
-      bg.fillStyle(0xFFFFFF, 0.18);
-      bg.fillRoundedRect(-w / 2 + 6, -h / 2 + 6, w - 12, h * 0.4, h / 2 * 0.8);
-    }
+    bg.fillStyle(0x2E7D32, 1);
+    bg.fillRoundedRect(-w / 2, -h / 2, w, h, r);
 
-    const text = this.add.text(0, 1, label, {
+    // 亮绿色前景（错位制造立体感）
+    bg.fillStyle(0x43A047, 1);
+    bg.fillRoundedRect(-w / 2, -h / 2, w, h - 4, r);
+
+    // 顶部高光条
+    bg.fillStyle(0xFFFFFF, 0.22);
+    bg.fillRoundedRect(-w / 2 + 8, -h / 2 + 6, w - 16, h * 0.38, r * 0.7);
+
+    const text = this.add.text(0, -1, label, {
       fontFamily: '"PingFang SC", "Microsoft YaHei", sans-serif',
-      fontSize: outlined ? '18px' : '20px',
+      fontSize: '20px',
       fontStyle: 'bold',
-      color: textColor,
+      color: '#FFFFFF',
+      shadow: { offsetX: 0, offsetY: 1, color: '#1B5E20', blur: 2, fill: true },
     }).setOrigin(0.5);
 
     btn.add([shadow, bg, text]);
@@ -205,7 +223,54 @@ export class MenuScene extends Phaser.Scene {
     hitArea.on('pointerdown', () => {
       this.tweens.add({
         targets: btn,
-        scaleX: 0.94, scaleY: 0.94,
+        scaleX: 0.95, scaleY: 0.95,
+        duration: 80,
+        yoyo: true,
+        onComplete: () => callback(),
+      });
+    });
+
+    return btn;
+  }
+
+  // ─── 次按钮（描边空心） ────────────────────────────────────────────────────────
+  private createOutlineBtn(
+    x: number, y: number,
+    w: number, h: number,
+    label: string,
+    callback: () => void,
+  ): Phaser.GameObjects.Container {
+    const btn = this.add.container(x, y);
+    const r = h / 2;
+
+    // 微阴影
+    const shadow = this.add.graphics();
+    shadow.fillStyle(0x000000, 0.06);
+    shadow.fillRoundedRect(-w / 2 + 2, -h / 2 + 4, w, h, r);
+
+    // 白色底 + 绿色描边
+    const bg = this.add.graphics();
+    bg.fillStyle(0xFFFFFF, 0.95);
+    bg.fillRoundedRect(-w / 2, -h / 2, w, h, r);
+    bg.lineStyle(2, 0x43A047, 1);
+    bg.strokeRoundedRect(-w / 2, -h / 2, w, h, r);
+
+    const text = this.add.text(0, 0, label, {
+      fontFamily: '"PingFang SC", "Microsoft YaHei", sans-serif',
+      fontSize: '18px',
+      fontStyle: 'bold',
+      color: '#2E7D32',
+    }).setOrigin(0.5);
+
+    btn.add([shadow, bg, text]);
+
+    const hitArea = this.add.rectangle(x, y, w, h, 0x000000, 0)
+      .setInteractive({ useHandCursor: true });
+
+    hitArea.on('pointerdown', () => {
+      this.tweens.add({
+        targets: btn,
+        scaleX: 0.95, scaleY: 0.95,
         duration: 80,
         yoyo: true,
         onComplete: () => callback(),
@@ -232,8 +297,10 @@ export class MenuScene extends Phaser.Scene {
     const { width, height } = this.scale;
 
     const panelH = height * 0.72;
-    const container = this.add.container(0, height); // 初始在屏幕外底部
+    // 面板初始隐藏：y 放到屏幕外底部足够远，且设为不可见
+    const container = this.add.container(0, height + panelH + 80);
     container.setDepth(100);
+    container.setVisible(false); // 初始不可见，打开时再显示
     this.levelPanel = container;
 
     // 遮罩层
@@ -358,9 +425,15 @@ export class MenuScene extends Phaser.Scene {
   private openLevelPanel() {
     if (this.panelVisible) return;
     this.panelVisible = true;
+    const { height } = this.scale;
+    const panelH = height * 0.72;
+    // 先设为可见，再做动画
+    this.levelPanel.setVisible(true);
+    this.levelPanel.y = height + panelH + 80;
+    // 打开：container.y 移到 height-40，面板底部贴屏幕底
     this.tweens.add({
       targets: this.levelPanel,
-      y: 0,
+      y: height - 40,
       duration: 380,
       ease: 'Cubic.easeOut',
     });
@@ -371,12 +444,16 @@ export class MenuScene extends Phaser.Scene {
     if (!this.panelVisible) return;
     this.panelVisible = false;
     const { height } = this.scale;
+    const panelH = height * 0.72;
     this.tweens.add({
       targets: this.levelPanel,
-      y: height,
+      y: height + panelH + 80,
       duration: 320,
       ease: 'Cubic.easeIn',
-      onComplete: () => onComplete?.(),
+      onComplete: () => {
+        this.levelPanel.setVisible(false);
+        onComplete?.();
+      },
     });
   }
 }
