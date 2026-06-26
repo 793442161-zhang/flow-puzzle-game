@@ -77,7 +77,6 @@ export class MenuScene extends Phaser.Scene {
       fontFamily: '"PingFang SC", sans-serif',
       fontSize: '14px',
       color: '#66BB6A',
-      letterSpacing: 1,
     }).setOrigin(0.5);
 
     // ── 进度展示 ──
