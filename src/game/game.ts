@@ -6,15 +6,21 @@ import { completeLevel } from './storage';
 
 // 每关的主题色
 const LEVEL_COLORS = [
-  '#4FC3F7', '#FF7043', '#AB47BC', '#66BB6A',
-  '#FFCA28', '#FF5252', '#26C6DA', '#EC407A',
-  '#5C6BC0', '#26A69A',
+  '#FF6A3D', '#F72585', '#3F7CFF', '#B8FF00',
+  '#B43CFF', '#FF9A3D', '#45D8FF', '#4BF0A6',
+  '#D84CFF', '#5A7BFF',
 ];
 
 // 设计常量
 const CELL_GAP = 6;
-const CELL_RADIUS_RATIO = 0.18;
-const PATH_WIDTH_RATIO = 0.38;
+const EMPTY_CELL_RADIUS_RATIO = 0.16;
+const PATH_CELL_RADIUS_RATIO = 0.34;
+const BOARD_PADDING_RATIO = 0.25;
+const BOARD_RADIUS_RATIO = 0.42;
+const MERGE_PULSE_DURATION = 190;
+
+type Cell = { row: number; col: number };
+type MergePulse = { cell: Cell; from: Cell; startedAt: number; duration: number };
 
 export class Game {
   private canvas: HTMLCanvasElement;
@@ -27,12 +33,16 @@ export class Game {
   private pathColor = '#4FC3F7';
   private hintSolution: [number, number][] | null = null;
   private hintTimers: ReturnType<typeof setTimeout>[] = [];
+  private mergePulse: MergePulse | null = null;
+  private mergeAnimationFrame: number | null = null;
 
   private cellSize = 60;
+  private boardPadding = 12;
   private gridOffsetX = 0;
   private gridOffsetY = 0;
 
   private onLevelCompleteCallback?: (levelIndex: number) => void;
+  private onProgressCallback?: (progress: number) => void;
 
   constructor(canvas: HTMLCanvasElement) {
     this.canvas = canvas;
@@ -48,10 +58,12 @@ export class Game {
     this.state = new GameState(this.level);
     this.pathColor = LEVEL_COLORS[levelIndex % LEVEL_COLORS.length];
     this.hintSolution = solvePuzzle(this.level);
+    this.clearMergePulse();
     this.clearHintTimers();
 
     this.resize();
     this.render();
+    this.emitProgress();
     this.playEnterAnimation();
   }
 
@@ -62,27 +74,27 @@ export class Game {
     const wrapW = wrap.clientWidth;
     const wrapH = wrap.clientHeight;
 
-    // 计算格子尺寸
     const { rows, cols } = this.level;
-    const maxGridW = Math.min(wrapW - 40, 380);
-    const maxGridH = Math.min(wrapH - 16, 440);
-    const sizeByW = Math.floor((maxGridW - CELL_GAP * (cols - 1)) / cols);
-    const sizeByH = Math.floor((maxGridH - CELL_GAP * (rows - 1)) / rows);
-    this.cellSize = Math.min(sizeByW, sizeByH, 88);
+    const maxBoardW = Math.min(wrapW - 36, 394);
+    const maxBoardH = Math.min(wrapH - 18, 454);
+    const reservedPadding = 24;
+    const sizeByW = Math.floor((maxBoardW - reservedPadding * 2 - CELL_GAP * (cols - 1)) / cols);
+    const sizeByH = Math.floor((maxBoardH - reservedPadding * 2 - CELL_GAP * (rows - 1)) / rows);
+    this.cellSize = Math.max(34, Math.min(sizeByW, sizeByH, 86));
+    this.boardPadding = Math.max(14, Math.min(24, Math.round(this.cellSize * BOARD_PADDING_RATIO)));
 
     const gridW = cols * this.cellSize + (cols - 1) * CELL_GAP;
     const gridH = rows * this.cellSize + (rows - 1) * CELL_GAP;
 
-    // 设置 canvas 物理/CSS 尺寸
-    const cw = gridW;
-    const ch = gridH;
+    const cw = gridW + this.boardPadding * 2;
+    const ch = gridH + this.boardPadding * 2;
     this.canvas.style.width = `${cw}px`;
     this.canvas.style.height = `${ch}px`;
     this.canvas.width = Math.round(cw * this.dpr);
     this.canvas.height = Math.round(ch * this.dpr);
 
-    this.gridOffsetX = 0;
-    this.gridOffsetY = 0;
+    this.gridOffsetX = this.boardPadding;
+    this.gridOffsetY = this.boardPadding;
   }
 
   // ── 主渲染 ──────────────────────────────────────────────────────────────
@@ -93,115 +105,76 @@ export class Game {
     ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
     ctx.save();
     ctx.scale(dpr, dpr);
-    this.drawGrid();
-    this.drawPath();
-    this.drawDots();
+    const pathSet = this.createPathSet(this.state.pathCells);
+    this.drawBoardBase();
+    this.drawBoardContents(() => {
+      this.drawGrid(pathSet);
+      this.drawPath();
+      this.drawDots();
+    });
     ctx.restore();
   }
 
   // ── 格子底层 ─────────────────────────────────────────────────────────────
-  private drawGrid() {
+  private drawBoardBase() {
+    const ctx = this.ctx;
+    const width = this.canvas.width / this.dpr;
+    const height = this.canvas.height / this.dpr;
+    const radius = this.getBoardRadius();
+
+    ctx.save();
+    ctx.shadowColor = 'rgba(42, 31, 22, 0.16)';
+    ctx.shadowBlur = 12;
+    ctx.shadowOffsetY = 8;
+    this.roundRect(0, 0, width, height, radius);
+    ctx.fillStyle = '#d8cfc3';
+    ctx.fill();
+    ctx.restore();
+
+    this.roundRect(1, 1, width - 2, height - 2, Math.max(4, radius - 1));
+    ctx.strokeStyle = 'rgba(29,29,29,0.06)';
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
+  }
+
+  private drawGrid(excludedCells = new Set<string>()) {
     const { rows, cols, grid } = this.level;
     const s = this.cellSize;
-    const r = Math.min(s * CELL_RADIUS_RATIO, 14);
-    const path = this.state.pathCells;
-    const pathSet = new Set(path.map(p => `${p.row},${p.col}`));
-    const color = this.pathColor;
+    const r = this.getEmptyCellRadius();
 
     for (let row = 0; row < rows; row++) {
       for (let col = 0; col < cols; col++) {
         if (grid[row][col] !== 1) continue;
+        if (excludedCells.has(this.cellKey(row, col))) continue;
         const { px, py } = this.cellToPixel(row, col);
-        const filled = pathSet.has(`${row},${col}`);
-
-        if (filled) {
-          // 填充色格子
-          this.roundRect(px, py, s, s, r);
-          this.ctx.fillStyle = color;
-          this.ctx.fill();
-          // 高光
-          this.roundRect(px + 4, py + 4, s - 8, (s - 8) * 0.38, r * 0.6);
-          this.ctx.fillStyle = 'rgba(255,255,255,0.22)';
-          this.ctx.fill();
-        } else {
-          // 阴影
-          this.roundRect(px + 3, py + 5, s, s, r);
-          this.ctx.fillStyle = 'rgba(0,0,0,0.07)';
-          this.ctx.fill();
-          // 底色
-          this.roundRect(px, py, s, s, r);
-          this.ctx.fillStyle = '#E8F5E9';
-          this.ctx.fill();
-          // 高光
-          this.roundRect(px + 4, py + 4, s - 8, (s - 8) * 0.32, r * 0.6);
-          this.ctx.fillStyle = 'rgba(255,255,255,0.65)';
-          this.ctx.fill();
-          // 边框
-          this.roundRect(px, py, s, s, r);
-          this.ctx.strokeStyle = 'rgba(200,230,201,0.85)';
-          this.ctx.lineWidth = 1.5;
-          this.ctx.stroke();
-        }
+        this.drawCellTile(px, py, s, r);
       }
     }
   }
 
   // ── 路径连接线 ───────────────────────────────────────────────────────────
   private drawPath() {
-    const path = this.state.pathCells;
+    this.drawPathCells(this.state.pathCells, this.pathColor);
+  }
+
+  private drawPathCells(path: Cell[], color: string) {
     if (path.length === 0) return;
-
     const ctx = this.ctx;
-    const s = this.cellSize;
-    const half = s / 2;
-    const pw = s * PATH_WIDTH_RATIO;
-    const hw = pw / 2;
-    const color = this.pathColor;
+    const r = this.getPathCellRadius();
+    const now = performance.now();
 
+    ctx.save();
     ctx.fillStyle = color;
 
-    // 中心圆
-    for (const cell of path) {
-      const { px, py } = this.cellToPixel(cell.row, cell.col);
-      ctx.beginPath();
-      ctx.arc(px + half, py + half, hw, 0, Math.PI * 2);
-      ctx.fill();
-    }
-
-    // 连接矩形
     for (let i = 0; i < path.length - 1; i++) {
-      const a = path[i], b = path[i + 1];
-      const ap = this.cellToPixel(a.row, a.col);
-      const bp = this.cellToPixel(b.row, b.col);
-      const ax = ap.px + half, ay = ap.py + half;
-      const bx = bp.px + half, by = bp.py + half;
-      if (a.row === b.row) {
-        ctx.fillRect(Math.min(ax, bx), ay - hw, Math.abs(bx - ax), pw);
-      } else {
-        ctx.fillRect(ax - hw, Math.min(ay, by), pw, Math.abs(by - ay));
-      }
+      this.drawPathConnector(path[i], path[i + 1], r);
     }
 
-    // 起点白心
-    const fp = this.cellToPixel(path[0].row, path[0].col);
-    ctx.fillStyle = 'rgba(255,255,255,0.7)';
-    ctx.beginPath();
-    ctx.arc(fp.px + half, fp.py + half, hw * 0.5, 0, Math.PI * 2);
-    ctx.fill();
-
-    // 末端白点
-    if (path.length > 1) {
-      const last = path[path.length - 1];
-      const lp = this.cellToPixel(last.row, last.col);
-      ctx.fillStyle = color;
-      ctx.beginPath();
-      ctx.arc(lp.px + half, lp.py + half, hw, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.fillStyle = 'rgba(255,255,255,0.45)';
-      ctx.beginPath();
-      ctx.arc(lp.px + half, lp.py + half, hw * 0.4, 0, Math.PI * 2);
-      ctx.fill();
-    }
+    path.forEach(cell => {
+      const transform = this.getMergeCellTransform(cell, now);
+      this.drawPathCell(cell, r, transform.scaleX, transform.scaleY);
+    });
+    ctx.restore();
   }
 
   // ── 起终点标记 ───────────────────────────────────────────────────────────
@@ -211,31 +184,41 @@ export class Game {
     const [er, ec] = this.level.end;
     const s = this.cellSize;
     const half = s / 2;
-    const dotR = s * 0.24;
+    const ringR = s * 0.28;
+    const ringW = Math.max(5, s * 0.08);
 
-    // 起点（珊瑚色 + 白心）
     const sp = this.cellToPixel(sr, sc);
-    ctx.fillStyle = '#FF7043';
-    ctx.beginPath();
-    ctx.arc(sp.px + half, sp.py + half, dotR, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.fillStyle = 'rgba(255,255,255,0.95)';
-    ctx.beginPath();
-    ctx.arc(sp.px + half, sp.py + half, dotR * 0.45, 0, Math.PI * 2);
-    ctx.fill();
+    const sx = sp.px + half;
+    const sy = sp.py + half;
 
-    // 终点（暖黄色 + ★）
-    const ep = this.cellToPixel(er, ec);
-    ctx.fillStyle = '#FFD54F';
+    ctx.save();
+    ctx.shadowColor = 'rgba(42,31,22,0.16)';
+    ctx.shadowBlur = 4;
+    ctx.shadowOffsetY = 2;
+    ctx.strokeStyle = '#fff';
+    ctx.lineWidth = ringW;
     ctx.beginPath();
-    ctx.arc(ep.px + half, ep.py + half, dotR, 0, Math.PI * 2);
-    ctx.fill();
-    // 终点星
-    ctx.font = `bold ${Math.round(dotR * 1.5)}px serif`;
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
+    ctx.arc(sx, sy, ringR, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.restore();
+
+    const ep = this.cellToPixel(er, ec);
+    const ex = ep.px + half;
+    const ey = ep.py + half;
+
+    ctx.save();
+    ctx.shadowColor = 'rgba(42,31,22,0.16)';
+    ctx.shadowBlur = 4;
+    ctx.shadowOffsetY = 2;
+    ctx.strokeStyle = '#fff';
+    ctx.lineWidth = ringW;
+    ctx.beginPath();
+    ctx.arc(ex, ey, ringR, 0, Math.PI * 2);
+    ctx.stroke();
     ctx.fillStyle = '#fff';
-    ctx.fillText('★', ep.px + half, ep.py + half + 1);
+    this.drawStar(ex, ey + s * 0.01, s * 0.2, s * 0.09);
+    ctx.fill();
+    ctx.restore();
   }
 
   // ── 提示路径渲染 ─────────────────────────────────────────────────────────
@@ -245,74 +228,13 @@ export class Game {
     ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
     ctx.save();
     ctx.scale(dpr, dpr);
-
-    const { rows, cols, grid } = this.level;
-    const s = this.cellSize;
-    const r = Math.min(s * CELL_RADIUS_RATIO, 14);
-    const half = s / 2;
-    const pw = s * PATH_WIDTH_RATIO;
-    const hw = pw / 2;
-    const pathSet = new Set(path.map(([pr, pc]) => `${pr},${pc}`));
-
-    // 格子
-    for (let row = 0; row < rows; row++) {
-      for (let col = 0; col < cols; col++) {
-        if (grid[row][col] !== 1) continue;
-        const { px, py } = this.cellToPixel(row, col);
-        const filled = pathSet.has(`${row},${col}`);
-        if (filled) {
-          this.roundRect(px, py, s, s, r);
-          ctx.fillStyle = color;
-          ctx.fill();
-          this.roundRect(px + 4, py + 4, s - 8, (s - 8) * 0.38, r * 0.6);
-          ctx.fillStyle = 'rgba(255,255,255,0.22)';
-          ctx.fill();
-        } else {
-          this.roundRect(px + 3, py + 5, s, s, r);
-          ctx.fillStyle = 'rgba(0,0,0,0.07)';
-          ctx.fill();
-          this.roundRect(px, py, s, s, r);
-          ctx.fillStyle = '#E8F5E9';
-          ctx.fill();
-          this.roundRect(px + 4, py + 4, s - 8, (s - 8) * 0.32, r * 0.6);
-          ctx.fillStyle = 'rgba(255,255,255,0.65)';
-          ctx.fill();
-          this.roundRect(px, py, s, s, r);
-          ctx.strokeStyle = 'rgba(200,230,201,0.85)';
-          ctx.lineWidth = 1.5;
-          ctx.stroke();
-        }
-      }
-    }
-
-    // 路径
-    if (path.length > 0) {
-      ctx.fillStyle = color;
-      for (const [row, col] of path) {
-        const { px, py } = this.cellToPixel(row, col);
-        ctx.beginPath();
-        ctx.arc(px + half, py + half, hw, 0, Math.PI * 2);
-        ctx.fill();
-      }
-      for (let i = 0; i < path.length - 1; i++) {
-        const [ar, ac] = path[i], [br, bc] = path[i + 1];
-        const ap = this.cellToPixel(ar, ac), bp = this.cellToPixel(br, bc);
-        const ax = ap.px + half, ay = ap.py + half;
-        const bx = bp.px + half, by = bp.py + half;
-        if (ar === br) {
-          ctx.fillRect(Math.min(ax, bx), ay - hw, Math.abs(bx - ax), pw);
-        } else {
-          ctx.fillRect(ax - hw, Math.min(ay, by), pw, Math.abs(by - ay));
-        }
-      }
-      const fp = this.cellToPixel(path[0][0], path[0][1]);
-      ctx.fillStyle = 'rgba(255,255,255,0.65)';
-      ctx.beginPath();
-      ctx.arc(fp.px + half, fp.py + half, hw * 0.5, 0, Math.PI * 2);
-      ctx.fill();
-    }
-
-    this.drawDots();
+    const hintPath = path.map(([row, col]) => ({ row, col }));
+    this.drawBoardBase();
+    this.drawBoardContents(() => {
+      this.drawGrid(this.createPathSet(hintPath));
+      this.drawPathCells(hintPath, color);
+      this.drawDots();
+    });
     ctx.restore();
   }
 
@@ -321,10 +243,16 @@ export class Game {
     let isDragging = false;
     let lastCell: { row: number; col: number } | null = null;
 
-    const getCell = (clientX: number, clientY: number) => {
+    const getPoint = (clientX: number, clientY: number) => {
       const rect = this.canvas.getBoundingClientRect();
-      const x = clientX - rect.left;
-      const y = clientY - rect.top;
+      return {
+        x: clientX - rect.left,
+        y: clientY - rect.top,
+      };
+    };
+
+    const getCell = (clientX: number, clientY: number) => {
+      const { x, y } = getPoint(clientX, clientY);
       return this.pixelToCell(x, y);
     };
 
@@ -337,28 +265,45 @@ export class Game {
         isDragging = true;
         lastCell = cell;
         this.render();
+        this.emitProgress();
       }
     };
 
     const onMove = (clientX: number, clientY: number) => {
       if (!isDragging) return;
       const cell = getCell(clientX, clientY);
-      if (!cell) return;
-      if (lastCell && cell.row === lastCell.row && cell.col === lastCell.col) return;
-      lastCell = cell;
+      if (!cell) {
+        this.render();
+        return;
+      }
+      if (lastCell && cell.row === lastCell.row && cell.col === lastCell.col) {
+        this.render();
+        return;
+      }
+      const previousCell = lastCell ? { ...lastCell } : null;
       const result = this.state.moveTo(cell.row, cell.col);
       if (result !== 'invalid') {
+        if (result === 'extend' && previousCell) {
+          this.playMergePulse(cell, previousCell);
+        } else if (result === 'backtrack') {
+          this.clearMergePulse();
+        }
+        lastCell = cell;
         this.render();
+        this.emitProgress();
         if (this.state.isComplete) {
           isDragging = false;
           this.handleComplete();
         }
+      } else {
+        this.render();
       }
     };
 
     const onEnd = () => {
       isDragging = false;
       if (this.state) this.state.endDrag();
+      if (this.state && !this.state.isComplete) this.render();
     };
 
     // Touch
@@ -401,6 +346,177 @@ export class Game {
   }
 
   // ── 工具方法 ─────────────────────────────────────────────────────────────
+  private drawCellTile(x: number, y: number, size: number, radius: number) {
+    const ctx = this.ctx;
+    this.roundRect(x, y, size, size, radius);
+    ctx.fillStyle = '#f7f1ea';
+    ctx.fill();
+
+    ctx.strokeStyle = '#d0c6ba';
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
+  }
+
+  private drawStar(cx: number, cy: number, outerRadius: number, innerRadius: number) {
+    const ctx = this.ctx;
+    ctx.beginPath();
+    for (let i = 0; i < 10; i++) {
+      const radius = i % 2 === 0 ? outerRadius : innerRadius;
+      const angle = -Math.PI / 2 + i * Math.PI / 5;
+      const x = cx + Math.cos(angle) * radius;
+      const y = cy + Math.sin(angle) * radius;
+      if (i === 0) ctx.moveTo(x, y);
+      else ctx.lineTo(x, y);
+    }
+    ctx.closePath();
+  }
+
+  private clamp(value: number, min: number, max: number) {
+    return Math.min(max, Math.max(min, value));
+  }
+
+  private drawPathConnector(a: Cell, b: Cell, radius: number) {
+    const ctx = this.ctx;
+    const s = this.cellSize;
+    const ap = this.cellToPixel(a.row, a.col);
+    const bp = this.cellToPixel(b.row, b.col);
+
+    if (a.row === b.row) {
+      const left = Math.min(ap.px, bp.px);
+      ctx.fillRect(left + s - radius, ap.py, CELL_GAP + radius * 2, s);
+    } else if (a.col === b.col) {
+      const top = Math.min(ap.py, bp.py);
+      ctx.fillRect(ap.px, top + s - radius, s, CELL_GAP + radius * 2);
+    }
+  }
+
+  private drawPathCell(cell: Cell, radius: number, scaleX = 1, scaleY = scaleX) {
+    const ctx = this.ctx;
+    const s = this.cellSize;
+    const { px, py } = this.cellToPixel(cell.row, cell.col);
+    const cx = px + s / 2;
+    const cy = py + s / 2;
+
+    ctx.save();
+    if (scaleX !== 1 || scaleY !== 1) {
+      ctx.translate(cx, cy);
+      ctx.scale(scaleX, scaleY);
+      ctx.translate(-cx, -cy);
+    }
+    this.roundRect(px, py, s, s, radius);
+    ctx.fill();
+    ctx.restore();
+  }
+
+  private createPathSet(path: Cell[]) {
+    return new Set(path.map(cell => this.cellKey(cell.row, cell.col)));
+  }
+
+  private cellKey(row: number, col: number) {
+    return `${row},${col}`;
+  }
+
+  private getEmptyCellRadius() {
+    return Math.min(this.cellSize * EMPTY_CELL_RADIUS_RATIO, 18);
+  }
+
+  private getPathCellRadius() {
+    return Math.min(this.cellSize * PATH_CELL_RADIUS_RATIO, 30);
+  }
+
+  private getBoardRadius() {
+    return Math.min(this.cellSize * BOARD_RADIUS_RATIO, this.boardPadding + 14, 36);
+  }
+
+  private drawBoardContents(draw: () => void) {
+    const ctx = this.ctx;
+    const width = this.canvas.width / this.dpr;
+    const height = this.canvas.height / this.dpr;
+
+    ctx.save();
+    this.roundRect(0, 0, width, height, this.getBoardRadius());
+    ctx.clip();
+    draw();
+    ctx.restore();
+  }
+
+  private getMergeCellTransform(cell: Cell, now: number) {
+    if (!this.mergePulse || !this.isSameCell(cell, this.mergePulse.cell)) {
+      return { scaleX: 1, scaleY: 1 };
+    }
+
+    const t = this.clamp((now - this.mergePulse.startedAt) / this.mergePulse.duration, 0, 1);
+    const grow = 0.88 + this.easeOutCubic(t) * 0.12;
+    const jelly = Math.sin(t * Math.PI) * 0.12;
+    const base = grow + jelly;
+    const directionStretch = (1 - t) * 0.1 + Math.sin(t * Math.PI) * 0.04;
+    const dx = cell.col - this.mergePulse.from.col;
+    const dy = cell.row - this.mergePulse.from.row;
+
+    if (dx !== 0) {
+      return {
+        scaleX: base + directionStretch,
+        scaleY: base - directionStretch * 0.36,
+      };
+    }
+
+    if (dy !== 0) {
+      return {
+        scaleX: base - directionStretch * 0.36,
+        scaleY: base + directionStretch,
+      };
+    }
+
+    return { scaleX: base, scaleY: base };
+  }
+
+  private playMergePulse(cell: Cell, from: Cell) {
+    this.mergePulse = {
+      cell,
+      from,
+      startedAt: performance.now(),
+      duration: MERGE_PULSE_DURATION,
+    };
+    this.startMergeAnimationLoop();
+  }
+
+  private startMergeAnimationLoop() {
+    if (this.mergeAnimationFrame !== null) return;
+
+    const tick = () => {
+      this.mergeAnimationFrame = null;
+      if (!this.mergePulse) return;
+
+      const elapsed = performance.now() - this.mergePulse.startedAt;
+      this.render();
+
+      if (elapsed < this.mergePulse.duration) {
+        this.startMergeAnimationLoop();
+      } else {
+        this.mergePulse = null;
+        this.render();
+      }
+    };
+
+    this.mergeAnimationFrame = requestAnimationFrame(tick);
+  }
+
+  private clearMergePulse() {
+    this.mergePulse = null;
+    if (this.mergeAnimationFrame !== null) {
+      cancelAnimationFrame(this.mergeAnimationFrame);
+      this.mergeAnimationFrame = null;
+    }
+  }
+
+  private isSameCell(a: Cell, b: Cell) {
+    return a.row === b.row && a.col === b.col;
+  }
+
+  private easeOutCubic(t: number) {
+    return 1 - Math.pow(1 - t, 3);
+  }
+
   private roundRect(x: number, y: number, w: number, h: number, r: number) {
     const ctx = this.ctx;
     ctx.beginPath();
@@ -460,41 +576,32 @@ export class Game {
     ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
     ctx.save();
     ctx.scale(dpr, dpr);
+    this.drawBoardBase();
 
     const { grid } = this.level;
     const s = this.cellSize;
-    const r = Math.min(s * CELL_RADIUS_RATIO, 14);
+    const r = this.getEmptyCellRadius();
 
-    cells.forEach((cell, i) => {
-      if (!grid[cell.row][cell.col]) return;
-      const { px, py } = this.cellToPixel(cell.row, cell.col);
-      const cx = px + s / 2, cy = py + s / 2;
-      const sc = i < untilIdx ? 1 : (i === untilIdx ? scale : 0);
-      if (sc <= 0) return;
+    this.drawBoardContents(() => {
+      cells.forEach((cell, i) => {
+        if (!grid[cell.row][cell.col]) return;
+        const { px, py } = this.cellToPixel(cell.row, cell.col);
+        const cx = px + s / 2, cy = py + s / 2;
+        const sc = i < untilIdx ? 1 : (i === untilIdx ? scale : 0);
+        if (sc <= 0) return;
 
-      ctx.save();
-      ctx.translate(cx, cy);
-      ctx.scale(sc, sc);
-      ctx.translate(-cx, -cy);
+        ctx.save();
+        ctx.translate(cx, cy);
+        ctx.scale(sc, sc);
+        ctx.translate(-cx, -cy);
 
-      this.roundRect(px + 3, py + 5, s, s, r);
-      ctx.fillStyle = 'rgba(0,0,0,0.07)';
-      ctx.fill();
-      this.roundRect(px, py, s, s, r);
-      ctx.fillStyle = '#E8F5E9';
-      ctx.fill();
-      this.roundRect(px + 4, py + 4, s - 8, (s - 8) * 0.32, r * 0.6);
-      ctx.fillStyle = 'rgba(255,255,255,0.65)';
-      ctx.fill();
-      this.roundRect(px, py, s, s, r);
-      ctx.strokeStyle = 'rgba(200,230,201,0.85)';
-      ctx.lineWidth = 1.5;
-      ctx.stroke();
+        this.drawCellTile(px, py, s, r);
 
-      ctx.restore();
+        ctx.restore();
+      });
+
+      this.drawDots();
     });
-
-    this.drawDots();
     ctx.restore();
   }
 
@@ -509,19 +616,28 @@ export class Game {
     this.onLevelCompleteCallback = cb;
   }
 
+  setOnProgress(cb: (progress: number) => void) {
+    this.onProgressCallback = cb;
+    this.emitProgress();
+  }
+
   // ── 公共操作 ─────────────────────────────────────────────────────────────
   resetLevel() {
     this.clearHintTimers();
+    this.clearMergePulse();
     this.state.reset();
     this.render();
+    this.emitProgress();
   }
 
   showHint() {
     if (!this.hintSolution) return;
     this.clearHintTimers();
+    this.clearMergePulse();
     this.state.applyHint(this.hintSolution);
+    this.emitProgress();
     const solution = this.hintSolution;
-    const hintColor = '#AB47BC';
+    const hintColor = this.pathColor;
 
     for (let i = 0; i <= solution.length; i++) {
       const t = setTimeout(() => {
@@ -547,6 +663,13 @@ export class Game {
   private clearHintTimers() {
     this.hintTimers.forEach(t => clearTimeout(t));
     this.hintTimers = [];
+  }
+
+  private emitProgress() {
+    if (!this.state) return;
+    const total = this.state.getTotalCells();
+    const progress = total > 0 ? this.state.pathCells.length / total : 0;
+    this.onProgressCallback?.(this.clamp(progress, 0, 1));
   }
 }
 

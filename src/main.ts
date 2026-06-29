@@ -18,8 +18,10 @@ const panelOverlay  = document.getElementById('panel-overlay')!;
 const levelGrid     = document.getElementById('level-grid')!;
 
 // 游戏页
-const gameStars     = document.getElementById('game-stars')!;
+const gameStarCount = document.getElementById('game-star-count')!;
 const gameLevelBadge = document.getElementById('game-level-badge')!;
+const gameProgressFill = document.getElementById('game-progress-fill')!;
+const gameProgressPercent = document.getElementById('game-progress-percent')!;
 const btnHome       = document.getElementById('btn-home')!;
 const gameBtnReset  = document.getElementById('game-btn-reset')!;
 const gameBtnHint   = document.getElementById('game-btn-hint')!;
@@ -55,6 +57,7 @@ function showGame(levelIndex: number) {
   setTimeout(() => {
     viewGame.classList.remove('hidden');
     updateGameTopBar();
+    updateGameProgress(0);
     game.load(levelIndex);
   }, 50);
   hideWinOverlay();
@@ -129,11 +132,19 @@ function closeLevelPanel() {
 // ─── 游戏顶部栏 ───────────────────────────────────────────────────────────
 function updateGameTopBar() {
   const progress = loadProgress();
-  gameStars.textContent = `⭐ ${progress.stars}`;
+  gameStarCount.textContent = `${progress.stars}`;
   const level = LEVELS[currentLevelIndex];
-  gameLevelBadge.textContent = `关卡${level.id} · ${level.title}`;
+  gameLevelBadge.textContent = `Level ${level.id}`;
   const isLast = currentLevelIndex >= LEVELS.length - 1;
   gameBtnNext.classList.toggle('disabled', isLast);
+}
+
+function updateGameProgress(progress: number) {
+  const safeProgress = Math.max(0, Math.min(1, progress));
+  const percent = Math.round(safeProgress * 100);
+  gameProgressFill.style.width = `${percent}%`;
+  gameProgressFill.classList.toggle('is-empty', percent === 0);
+  gameProgressPercent.textContent = `${percent}%`;
 }
 
 // ─── 过关弹窗 ─────────────────────────────────────────────────────────────
@@ -209,6 +220,10 @@ gameBtnNext.addEventListener('click', () => {
 // 游戏过关回调
 game.setOnComplete((levelIndex) => {
   showWinOverlay(levelIndex);
+});
+
+game.setOnProgress((progress) => {
+  updateGameProgress(progress);
 });
 
 // ─── 窗口 resize ─────────────────────────────────────────────────────────
