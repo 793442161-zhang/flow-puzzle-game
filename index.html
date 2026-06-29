@@ -1,50 +1,624 @@
 <!DOCTYPE html>
 <html lang="zh-CN">
-  <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
-    <meta name="apple-mobile-web-app-capable" content="yes" />
-    <title>🌿 填满格子</title>
-    <style>
-      * { margin: 0; padding: 0; box-sizing: border-box; }
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+  <title>🌿 填满格子</title>
+  <style>
+    /* ─── Reset & Base ─────────────────────────────────────────── */
+    *, *::before, *::after {
+      margin: 0; padding: 0;
+      box-sizing: border-box;
+      -webkit-tap-highlight-color: transparent;
+      user-select: none;
+      -webkit-user-select: none;
+    }
+    html, body {
+      width: 100%; height: 100%;
+      overflow: hidden;
+      background: #e8f5e9;
+      font-family: "PingFang SC", "SF Pro Display", "Microsoft YaHei", sans-serif;
+      touch-action: none;
+      position: fixed;
+    }
 
-      html, body {
-        width: 100%;
-        height: 100%;
-        overflow: hidden;
-        background: #F0FDF4;
-        touch-action: none;
-        -webkit-tap-highlight-color: transparent;
-        user-select: none;
-        -webkit-user-select: none;
-        position: fixed;
-      }
+    /* ─── 页面容器 ──────────────────────────────────────────────── */
+    #app {
+      width: 100%; height: 100%;
+      position: relative;
+      overflow: hidden;
+    }
 
-      #app {
-        width: 100%;
-        height: 100%;
-        background: #F0FDF4;
-      }
+    /* ─── 通用页面（View） ──────────────────────────────────────── */
+    .view {
+      position: absolute;
+      inset: 0;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      overflow: hidden;
+      transition: opacity 0.25s ease, transform 0.25s ease;
+    }
+    .view.hidden {
+      opacity: 0;
+      pointer-events: none;
+      transform: translateY(20px);
+    }
 
-      /*
-       * canvas 清晰度说明：
-       * Phaser Scale.FIT 会自动设置 canvas 的 width/height style 属性，
-       * 让它适应屏幕大小。我们不需要额外设置宽高，只需要：
-       * 1. 让 canvas 不被浏览器模糊处理（image-rendering）
-       * 2. 保持圆角和阴影视觉效果
-       *
-       * 注意：不要强制设置 width/height，会破坏 Phaser 的 Scale.FIT 逻辑
-       */
-      canvas {
-        display: block;
-        /* Scale.RESIZE 模式下 canvas 自动撑满屏幕，不需要圆角 */
-        image-rendering: -webkit-optimize-contrast;
-        image-rendering: crisp-edges;
-      }
-    </style>
-  </head>
-  <body>
-    <div id="app"></div>
-    <script type="module" src="/src/main.ts"></script>
-  </body>
+    /* ─── 主菜单页 ─────────────────────────────────────────────── */
+    #view-menu {
+      background: linear-gradient(160deg, #d4edda 0%, #f2faf2 55%, #eafaea 100%);
+      padding: env(safe-area-inset-top, 0px) 0 env(safe-area-inset-bottom, 0px) 0;
+    }
+
+    /* 背景气泡 */
+    .bg-bubbles {
+      position: absolute;
+      inset: 0;
+      pointer-events: none;
+      overflow: hidden;
+    }
+    .bubble {
+      position: absolute;
+      border-radius: 50%;
+      background: radial-gradient(circle at 40% 35%, rgba(255,255,255,0.5), transparent 70%);
+    }
+    .bubble-1 { width: 200px; height: 200px; top: -60px; left: -70px; background-color: rgba(165,214,167,0.28); }
+    .bubble-2 { width: 160px; height: 160px; top: 80px; right: -50px; background-color: rgba(128,203,196,0.22); }
+    .bubble-3 { width: 180px; height: 180px; bottom: -40px; right: 20%; background-color: rgba(197,225,165,0.22); }
+    .bubble-4 { width: 120px; height: 120px; bottom: 20%; left: -20px; background-color: rgba(230,238,156,0.25); }
+    .bubble-5 { width: 90px; height: 90px; top: 35%; right: 8%; background-color: rgba(165,214,167,0.2); }
+
+    /* Logo 区域 */
+    .menu-logo {
+      margin-top: max(10vh, 50px);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 4px;
+      position: relative;
+      z-index: 1;
+    }
+    .logo-icon-wrap {
+      width: 96px; height: 96px;
+      border-radius: 50%;
+      background: radial-gradient(circle, rgba(255,255,255,0.9) 40%, rgba(67,160,71,0.12) 100%);
+      box-shadow: 0 4px 20px rgba(46,125,50,0.18), 0 0 0 12px rgba(67,160,71,0.08), 0 0 0 22px rgba(67,160,71,0.05);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 46px;
+      line-height: 1;
+    }
+    .logo-title {
+      margin-top: 14px;
+      font-size: 32px;
+      font-weight: 700;
+      color: #1b5e20;
+      letter-spacing: 2px;
+    }
+    .logo-subtitle {
+      font-size: 13px;
+      color: #66bb6a;
+      letter-spacing: 1px;
+    }
+
+    /* 进度卡片 */
+    .menu-progress {
+      position: relative;
+      z-index: 1;
+      margin-top: max(5vh, 28px);
+      width: calc(100% - 48px);
+      max-width: 320px;
+      background: rgba(255,255,255,0.92);
+      border-radius: 20px;
+      border: 1.5px solid #c8e6c9;
+      box-shadow: 3px 5px 16px rgba(46,125,50,0.09);
+      padding: 14px 18px 12px 22px;
+    }
+    .progress-left-bar {
+      position: absolute;
+      left: 0; top: 14px;
+      width: 4px;
+      height: calc(100% - 28px);
+      background: #43a047;
+      border-radius: 0 2px 2px 0;
+    }
+    .progress-label {
+      font-size: 15px;
+      font-weight: 600;
+      color: #1b5e20;
+    }
+    .progress-track {
+      margin-top: 8px;
+      height: 7px;
+      background: #eef5ee;
+      border-radius: 4px;
+      overflow: hidden;
+    }
+    .progress-fill {
+      height: 100%;
+      background: #43a047;
+      border-radius: 4px;
+      transition: width 0.5s ease;
+    }
+
+    /* 按钮区域 */
+    .menu-btns {
+      position: relative;
+      z-index: 1;
+      margin-top: max(6vh, 36px);
+      width: calc(100% - 48px);
+      max-width: 300px;
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+    }
+    .btn-main {
+      width: 100%;
+      height: 60px;
+      border-radius: 30px;
+      border: none;
+      cursor: pointer;
+      font-family: inherit;
+      font-size: 19px;
+      font-weight: 700;
+      color: #fff;
+      background: #43a047;
+      box-shadow: 0 4px 0 #2e7d32, 0 6px 18px rgba(46,125,50,0.32);
+      position: relative;
+      overflow: hidden;
+      transition: transform 0.1s, box-shadow 0.1s;
+      letter-spacing: 1px;
+    }
+    .btn-main::after {
+      content: '';
+      position: absolute;
+      top: 6px; left: 8px;
+      right: 8px; height: 38%;
+      background: rgba(255,255,255,0.22);
+      border-radius: 14px;
+      pointer-events: none;
+    }
+    .btn-main:active {
+      transform: translateY(3px);
+      box-shadow: 0 1px 0 #2e7d32, 0 2px 8px rgba(46,125,50,0.25);
+    }
+    .btn-outline {
+      width: 100%;
+      height: 52px;
+      border-radius: 26px;
+      border: 2px solid #43a047;
+      cursor: pointer;
+      font-family: inherit;
+      font-size: 17px;
+      font-weight: 600;
+      color: #2e7d32;
+      background: rgba(255,255,255,0.92);
+      box-shadow: 0 2px 10px rgba(0,0,0,0.06);
+      transition: transform 0.1s, background 0.15s;
+    }
+    .btn-outline:active {
+      transform: scale(0.96);
+      background: rgba(232,245,233,0.95);
+    }
+
+    /* 重置进度 */
+    .menu-reset {
+      position: relative;
+      z-index: 1;
+      margin-top: auto;
+      margin-bottom: max(env(safe-area-inset-bottom, 0px), 16px);
+      padding: 8px 16px;
+      font-size: 12px;
+      color: #a5d6a7;
+      cursor: pointer;
+      border: none;
+      background: none;
+      font-family: inherit;
+    }
+
+    /* ─── 关卡选择面板（底部弹出） ─────────────────────────────── */
+    .panel-overlay {
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,0);
+      z-index: 50;
+      pointer-events: none;
+      transition: background 0.3s ease;
+    }
+    .panel-overlay.open {
+      background: rgba(0,0,0,0.45);
+      pointer-events: all;
+    }
+    .level-panel {
+      position: absolute;
+      bottom: 0; left: 0; right: 0;
+      background: #f8fbf8;
+      border-radius: 24px 24px 0 0;
+      max-height: 72vh;
+      display: flex;
+      flex-direction: column;
+      transform: translateY(100%);
+      transition: transform 0.35s cubic-bezier(0.33, 1, 0.68, 1);
+      overflow: hidden;
+    }
+    .panel-overlay.open .level-panel {
+      transform: translateY(0);
+    }
+    .panel-handle {
+      width: 44px; height: 5px;
+      background: #c8e6c9;
+      border-radius: 3px;
+      margin: 12px auto 0;
+      flex-shrink: 0;
+    }
+    .panel-title {
+      text-align: center;
+      font-size: 18px;
+      font-weight: 700;
+      color: #2e7d32;
+      padding: 10px 0 14px;
+      flex-shrink: 0;
+    }
+    .level-grid {
+      display: grid;
+      grid-template-columns: repeat(5, 1fr);
+      gap: 10px;
+      padding: 0 20px max(env(safe-area-inset-bottom, 0px), 20px);
+      overflow-y: auto;
+      -webkit-overflow-scrolling: touch;
+    }
+    .level-cell {
+      aspect-ratio: 1;
+      border-radius: 14px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      font-size: 16px;
+      font-weight: 700;
+      cursor: pointer;
+      position: relative;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.07);
+      transition: transform 0.12s;
+    }
+    .level-cell:active { transform: scale(0.88); }
+    .level-cell.completed {
+      background: #43a047;
+      color: #fff;
+    }
+    .level-cell.completed::after {
+      content: '';
+      position: absolute;
+      top: 4px; left: 4px; right: 4px;
+      height: 35%;
+      background: rgba(255,255,255,0.22);
+      border-radius: 8px;
+    }
+    .level-cell.unlocked {
+      background: #fff;
+      color: #2e7d32;
+      border: 2px solid #81c784;
+    }
+    .level-cell.locked {
+      background: #eceff1;
+      color: #b0bec5;
+      cursor: default;
+    }
+    .level-cell.locked:active { transform: none; }
+    .level-cell-name {
+      font-size: 9px;
+      font-weight: 400;
+      margin-top: 2px;
+      opacity: 0.75;
+    }
+
+    /* ─── 游戏页 ───────────────────────────────────────────────── */
+    #view-game {
+      background: linear-gradient(160deg, #d4edda 0%, #f2faf2 55%, #eafaea 100%);
+      padding: env(safe-area-inset-top, 0px) 0 env(safe-area-inset-bottom, 0px) 0;
+    }
+    #view-game .bg-bubbles { opacity: 0.7; }
+
+    /* 顶部栏 */
+    .game-topbar {
+      position: relative;
+      z-index: 2;
+      width: 100%;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 12px 16px 0;
+      flex-shrink: 0;
+    }
+    .topbar-stars {
+      font-size: 18px;
+      font-weight: 600;
+      color: #f9a825;
+      min-width: 60px;
+    }
+    .topbar-level-badge {
+      background: rgba(255,255,255,0.88);
+      border-radius: 20px;
+      padding: 7px 16px;
+      font-size: 15px;
+      font-weight: 700;
+      color: #2e7d32;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+    }
+    .topbar-home {
+      font-size: 24px;
+      cursor: pointer;
+      min-width: 44px; height: 44px;
+      display: flex; align-items: center; justify-content: flex-end;
+      transition: transform 0.15s;
+    }
+    .topbar-home:active { transform: scale(0.85); }
+
+    /* Canvas 容器 */
+    .game-canvas-wrap {
+      flex: 1;
+      width: 100%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 8px 0;
+      position: relative;
+      z-index: 1;
+    }
+    #game-canvas {
+      display: block;
+      touch-action: none;
+    }
+
+    /* 底部工具栏 */
+    .game-bottombar {
+      position: relative;
+      z-index: 2;
+      width: 100%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 20px;
+      padding: 0 16px max(env(safe-area-inset-bottom, 0px), 16px);
+      flex-shrink: 0;
+    }
+    .icon-btn {
+      width: 64px; height: 64px;
+      border-radius: 18px;
+      border: none;
+      cursor: pointer;
+      font-family: inherit;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 2px;
+      box-shadow: 0 3px 0 rgba(0,0,0,0.15), 0 4px 12px rgba(0,0,0,0.1);
+      transition: transform 0.1s, box-shadow 0.1s;
+      position: relative;
+      overflow: hidden;
+    }
+    .icon-btn::after {
+      content: '';
+      position: absolute;
+      top: 5px; left: 5px; right: 5px;
+      height: 40%;
+      background: rgba(255,255,255,0.25);
+      border-radius: 10px;
+    }
+    .icon-btn:active {
+      transform: translateY(2px);
+      box-shadow: 0 1px 0 rgba(0,0,0,0.12), 0 2px 6px rgba(0,0,0,0.1);
+    }
+    .icon-btn.btn-reset { background: #ff8a65; }
+    .icon-btn.btn-hint { background: #ffd54f; }
+    .icon-btn.btn-next { background: #66bb6a; }
+    .icon-btn.btn-next.disabled { opacity: 0.45; pointer-events: none; }
+    .icon-btn .btn-icon { font-size: 22px; line-height: 1; }
+    .icon-btn .btn-label {
+      font-size: 12px;
+      font-weight: 700;
+      color: #fff;
+    }
+    .icon-btn.btn-hint .btn-label { color: #795548; }
+
+    /* ─── 过关弹窗 ──────────────────────────────────────────────── */
+    .win-overlay {
+      position: fixed;
+      inset: 0;
+      z-index: 100;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: rgba(0,0,0,0);
+      pointer-events: none;
+      transition: background 0.25s ease;
+    }
+    .win-overlay.show {
+      background: rgba(0,0,0,0.42);
+      pointer-events: all;
+    }
+    .win-card {
+      background: #fff;
+      border-radius: 24px;
+      width: calc(100% - 60px);
+      max-width: 320px;
+      overflow: hidden;
+      box-shadow: 0 20px 60px rgba(0,0,0,0.2);
+      transform: scale(0.7);
+      opacity: 0;
+      transition: transform 0.32s cubic-bezier(0.34, 1.56, 0.64, 1), opacity 0.25s ease;
+    }
+    .win-overlay.show .win-card {
+      transform: scale(1);
+      opacity: 1;
+    }
+    .win-header {
+      background: linear-gradient(135deg, #66bb6a, #4fc3f7);
+      padding: 20px 16px 16px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 32px;
+    }
+    .win-body {
+      padding: 20px 20px 24px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 6px;
+    }
+    .win-title {
+      font-size: 26px;
+      font-weight: 700;
+      color: #2e7d32;
+    }
+    .win-star { font-size: 40px; }
+    .win-sub {
+      font-size: 14px;
+      color: #90a4ae;
+    }
+    .win-btns {
+      display: flex;
+      gap: 12px;
+      margin-top: 16px;
+      width: 100%;
+    }
+    .win-btn {
+      flex: 1;
+      height: 46px;
+      border-radius: 14px;
+      border: none;
+      cursor: pointer;
+      font-family: inherit;
+      font-size: 14px;
+      font-weight: 700;
+      color: #fff;
+      transition: transform 0.1s;
+    }
+    .win-btn:active { transform: scale(0.95); }
+    .win-btn-replay { background: #ff8a65; }
+    .win-btn-next { background: #66bb6a; }
+
+    /* ─── 粒子层 ────────────────────────────────────────────────── */
+    #particle-canvas {
+      position: fixed;
+      inset: 0;
+      pointer-events: none;
+      z-index: 99;
+    }
+
+    /* ─── 进场动画辅助 ──────────────────────────────────────────── */
+    @keyframes fadeSlideUp {
+      from { opacity: 0; transform: translateY(24px); }
+      to   { opacity: 1; transform: translateY(0); }
+    }
+    .anim-delay-1 { animation: fadeSlideUp 0.38s cubic-bezier(0.34,1.4,0.64,1) 0.18s both; }
+    .anim-delay-2 { animation: fadeSlideUp 0.38s cubic-bezier(0.34,1.4,0.64,1) 0.27s both; }
+    .anim-delay-3 { animation: fadeSlideUp 0.38s cubic-bezier(0.34,1.4,0.64,1) 0.36s both; }
+  </style>
+</head>
+<body>
+  <div id="app">
+    <!-- ── 主菜单页 ── -->
+    <div class="view" id="view-menu">
+      <div class="bg-bubbles">
+        <div class="bubble bubble-1"></div>
+        <div class="bubble bubble-2"></div>
+        <div class="bubble bubble-3"></div>
+        <div class="bubble bubble-4"></div>
+        <div class="bubble bubble-5"></div>
+      </div>
+
+      <div class="menu-logo">
+        <div class="logo-icon-wrap">🌿</div>
+        <div class="logo-title">填满格子</div>
+        <div class="logo-subtitle">Fill The Grid · 益智解谜</div>
+      </div>
+
+      <div class="menu-progress anim-delay-1">
+        <div class="progress-left-bar"></div>
+        <div class="progress-label" id="progress-label">⭐ 0 星 · 已通关 0 / 10</div>
+        <div class="progress-track">
+          <div class="progress-fill" id="progress-fill" style="width: 0%"></div>
+        </div>
+      </div>
+
+      <div class="menu-btns anim-delay-2">
+        <button class="btn-main" id="btn-start">开始游戏 ▶</button>
+        <button class="btn-outline" id="btn-select">📋 选择关卡</button>
+      </div>
+
+      <button class="menu-reset anim-delay-3" id="btn-reset">重置进度</button>
+    </div>
+
+    <!-- ── 游戏页 ── -->
+    <div class="view hidden" id="view-game">
+      <div class="bg-bubbles">
+        <div class="bubble bubble-1"></div>
+        <div class="bubble bubble-2"></div>
+        <div class="bubble bubble-3"></div>
+      </div>
+
+      <div class="game-topbar">
+        <div class="topbar-stars" id="game-stars">⭐ 0</div>
+        <div class="topbar-level-badge" id="game-level-badge">关卡1</div>
+        <div class="topbar-home" id="btn-home">🏠</div>
+      </div>
+
+      <div class="game-canvas-wrap">
+        <canvas id="game-canvas"></canvas>
+      </div>
+
+      <div class="game-bottombar">
+        <button class="icon-btn btn-reset" id="game-btn-reset">
+          <span class="btn-icon">🔄</span>
+          <span class="btn-label">重置</span>
+        </button>
+        <button class="icon-btn btn-hint" id="game-btn-hint">
+          <span class="btn-icon">💡</span>
+          <span class="btn-label">提示</span>
+        </button>
+        <button class="icon-btn btn-next" id="game-btn-next">
+          <span class="btn-icon">⏭</span>
+          <span class="btn-label">下关</span>
+        </button>
+      </div>
+    </div>
+
+    <!-- ── 关卡选择面板 ── -->
+    <div class="panel-overlay" id="panel-overlay">
+      <div class="level-panel">
+        <div class="panel-handle"></div>
+        <div class="panel-title">选择关卡</div>
+        <div class="level-grid" id="level-grid"></div>
+      </div>
+    </div>
+
+    <!-- ── 过关弹窗 ── -->
+    <div class="win-overlay" id="win-overlay">
+      <div class="win-card">
+        <div class="win-header">🎉</div>
+        <div class="win-body">
+          <div class="win-title">闯关成功！</div>
+          <div class="win-star">⭐</div>
+          <div class="win-sub" id="win-sub">第1关 · 初来乍到</div>
+          <div class="win-btns">
+            <button class="win-btn win-btn-replay" id="win-btn-replay">再来一次</button>
+            <button class="win-btn win-btn-next" id="win-btn-next">下一关 ▶</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── 粒子层 ── -->
+    <canvas id="particle-canvas"></canvas>
+  </div>
+
+  <script type="module" src="/src/main.ts"></script>
+</body>
 </html>

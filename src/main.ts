@@ -1,124 +1,221 @@
-import Phaser from 'phaser';
-import { BootScene } from './scenes/BootScene';
-import { MenuScene } from './scenes/MenuScene';
-import { GameScene } from './scenes/GameScene';
+import { LEVELS } from './data/levels';
+import { loadProgress, resetProgress } from './game/storage';
+import { Game, spawnParticles } from './game/game';
 
-/**
- * 高 DPI 清晰度方案（最终确定版）：
- *
- * 问题根源分析：
- * 每个 Game Object 渲染时，都会调用 SetTransform.js 里的：
- *   calcMatrix.setToContext(ctx)
- * 它内部使用 ctx.setTransform(this)（绝对赋值），会完全覆盖任何之前设置的 scale(dpr,dpr)。
- * calcMatrix = gameObject.matrix × camera.matrix，两者都不含 dpr 缩放。
- *
- * 解决方案（最优）：
- * 拦截 Phaser.GameObjects.Components.TransformMatrix.prototype.setToContext，
- * 在写入 ctx 之前，把矩阵的 6 个分量全部 × dpr：
- *   [a, b, c, d, e, f] × dpr → ctx.setTransform(a*dpr, b*dpr, c*dpr, d*dpr, e*dpr, f*dpr)
- * 这等价于在原始变换之前预乘一个 scale(dpr, dpr) 矩阵。
- *
- * 同时：
- * 1. 拦截 ScaleManager.updateScale，升级 canvas 物理分辨率（× dpr）并固定 CSS 尺寸
- * 2. 拦截 CanvasRenderer.preRender，把 clearRect/fillRect 范围扩展到整个物理 canvas
- *
- * 结果：游戏逻辑坐标 = CSS 逻辑像素（场景代码完全不变），渲染清晰
- */
+// ─── DOM 引用 ─────────────────────────────────────────────────────────────
+const viewMenu   = document.getElementById('view-menu')!;
+const viewGame   = document.getElementById('view-game')!;
 
-const dpr = window.devicePixelRatio || 1;
-const W = window.innerWidth;
-const H = window.innerHeight;
+// 菜单
+const progressLabel = document.getElementById('progress-label')!;
+const progressFill  = document.getElementById('progress-fill')!;
+const btnStart      = document.getElementById('btn-start')!;
+const btnSelect     = document.getElementById('btn-select')!;
+const btnResetProg  = document.getElementById('btn-reset')!;
 
-const config: Phaser.Types.Core.GameConfig = {
-  type: Phaser.CANVAS,
-  width: W,
-  height: H,
-  backgroundColor: '#F0FDF4',
-  scale: {
-    mode: Phaser.Scale.RESIZE,
-    width: W,
-    height: H,
-  },
-  scene: [BootScene, MenuScene, GameScene],
-  parent: 'app',
-  render: {
-    antialias: true,
-    pixelArt: false,
-    roundPixels: false,
-  },
-  input: {
-    activePointers: 3,
-  },
-  callbacks: {
-    postBoot: (game) => {
-      if (dpr <= 1) return;
+// 关卡面板
+const panelOverlay  = document.getElementById('panel-overlay')!;
+const levelGrid     = document.getElementById('level-grid')!;
 
-      const canvas = game.canvas;
+// 游戏页
+const gameStars     = document.getElementById('game-stars')!;
+const gameLevelBadge = document.getElementById('game-level-badge')!;
+const btnHome       = document.getElementById('btn-home')!;
+const gameBtnReset  = document.getElementById('game-btn-reset')!;
+const gameBtnHint   = document.getElementById('game-btn-hint')!;
+const gameBtnNext   = document.getElementById('game-btn-next')!;
+const gameCanvas    = document.getElementById('game-canvas') as HTMLCanvasElement;
 
-      // ─── 1. 升级 canvas 物理分辨率 ────────────────────────────────────────────
-      // 拦截 ScaleManager.updateScale，在 Phaser 设置 canvas.width/height 为逻辑像素后，
-      // 立即升级为物理像素，并固定 CSS 尺寸为逻辑像素
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const sm = game.scale as any;
-      const originalUpdateScale = sm.updateScale.bind(sm);
-      sm.updateScale = function () {
-        originalUpdateScale();
-        const lw = canvas.width;
-        const lh = canvas.height;
-        if (lw > 0 && lh > 0 && lw < lw * dpr) {
-          canvas.width = Math.round(lw * dpr);
-          canvas.height = Math.round(lh * dpr);
-          canvas.style.width = `${lw}px`;
-          canvas.style.height = `${lh}px`;
-        } else if (canvas.style.width === '') {
-          // 首次：样式尚未设置
-          canvas.style.width = `${canvas.width / dpr}px`;
-          canvas.style.height = `${canvas.height / dpr}px`;
-        }
-      };
+// 过关弹窗
+const winOverlay    = document.getElementById('win-overlay')!;
+const winSub        = document.getElementById('win-sub')!;
+const winBtnReplay  = document.getElementById('win-btn-replay')!;
+const winBtnNext    = document.getElementById('win-btn-next')!;
 
-      // ─── 2. 扩展 preRender 的清空范围 ─────────────────────────────────────────
-      // Phaser preRender 里 this.width/height 是逻辑尺寸（430），clearRect 只清逻辑区域
-      // 需要清空整个物理 canvas（860），否则会有残影
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const r = game.renderer as any;
-      const originalPreRender = r.preRender.bind(r);
-      r.preRender = function () {
-        // 临时把渲染器的 width/height 改为物理像素，让 clearRect 清整个 canvas
-        const origW = this.width;
-        const origH = this.height;
-        this.width = canvas.width;
-        this.height = canvas.height;
-        originalPreRender();
-        // 还原逻辑尺寸，确保后续渲染坐标系正确
-        this.width = origW;
-        this.height = origH;
-      };
+// 粒子
+const particleCanvas = document.getElementById('particle-canvas') as HTMLCanvasElement;
 
-      // ─── 3. 拦截 TransformMatrix.setToContext，注入 dpr 缩放 ─────────────────
-      // 每个 Game Object 渲染时调用此方法写入最终变换矩阵
-      // 原逻辑：ctx.setTransform(a, b, c, d, e, f)
-      // 修改后：ctx.setTransform(a*dpr, b*dpr, c*dpr, d*dpr, e*dpr, f*dpr)
-      // 等价于：先 scale(dpr, dpr)，再应用原始变换
-      const TransformMatrix = (Phaser.GameObjects.Components as any).TransformMatrix;
-      const originalSetToContext = TransformMatrix.prototype.setToContext;
-      TransformMatrix.prototype.setToContext = function (ctx: CanvasRenderingContext2D) {
-        const m = this.matrix;
-        ctx.setTransform(
-          m[0] * dpr, m[1] * dpr,
-          m[2] * dpr, m[3] * dpr,
-          m[4] * dpr, m[5] * dpr,
-        );
-        return ctx;
-      };
+// ─── 游戏实例 ─────────────────────────────────────────────────────────────
+const game = new Game(gameCanvas);
+let currentLevelIndex = 0;
 
-      // ─── 4. 立即触发一次 updateScale 应用物理分辨率 ───────────────────────────
-      sm.updateScale();
+// ─── 工具：页面切换 ───────────────────────────────────────────────────────
+function showMenu() {
+  viewGame.classList.add('hidden');
+  setTimeout(() => {
+    viewMenu.classList.remove('hidden');
+    updateMenuUI();
+  }, 50);
+  hideWinOverlay();
+}
 
-      // 保留引用防止 GC（实际不需要，但明确意图）
-      void originalSetToContext;
-    },
-  },
-};
+function showGame(levelIndex: number) {
+  currentLevelIndex = levelIndex;
+  viewMenu.classList.add('hidden');
+  setTimeout(() => {
+    viewGame.classList.remove('hidden');
+    updateGameTopBar();
+    game.load(levelIndex);
+  }, 50);
+  hideWinOverlay();
+}
 
-new Phaser.Game(config);
+// ─── 菜单 UI ─────────────────────────────────────────────────────────────
+function updateMenuUI() {
+  const progress = loadProgress();
+  const completed = progress.completedLevels.length;
+  const total = LEVELS.length;
+  const fillPct = total > 0 ? (completed / total) * 100 : 0;
+
+  progressLabel.textContent = `⭐ ${progress.stars} 星 · 已通关 ${completed} / ${total}`;
+  progressFill.style.width = `${fillPct}%`;
+
+  const nextIdx = getNextLevelIndex(progress);
+  if (completed > 0) {
+    btnStart.textContent = `继续游戏  第 ${nextIdx + 1} 关  ▶`;
+  } else {
+    btnStart.textContent = '开始游戏  ▶';
+  }
+}
+
+function getNextLevelIndex(progress: ReturnType<typeof loadProgress>): number {
+  for (let i = 0; i < LEVELS.length; i++) {
+    if (!progress.completedLevels.includes(LEVELS[i].id)) return i;
+  }
+  return LEVELS.length - 1;
+}
+
+// ─── 关卡面板 ─────────────────────────────────────────────────────────────
+function buildLevelPanel() {
+  const progress = loadProgress();
+  levelGrid.innerHTML = '';
+  LEVELS.forEach((level, i) => {
+    const isCompleted = progress.completedLevels.includes(level.id);
+    const isUnlocked  = level.id <= progress.unlockedLevel;
+
+    const cell = document.createElement('div');
+    cell.className = `level-cell ${isCompleted ? 'completed' : isUnlocked ? 'unlocked' : 'locked'}`;
+
+    const num = document.createElement('div');
+    num.textContent = isCompleted ? '✓' : isUnlocked ? `${level.id}` : '🔒';
+    cell.appendChild(num);
+
+    if (isUnlocked) {
+      const name = document.createElement('div');
+      name.className = 'level-cell-name';
+      name.textContent = level.title.slice(0, 4);
+      cell.appendChild(name);
+    }
+
+    if (isUnlocked) {
+      cell.addEventListener('click', () => {
+        closeLevelPanel();
+        setTimeout(() => showGame(i), 320);
+      });
+    }
+    levelGrid.appendChild(cell);
+  });
+}
+
+function openLevelPanel() {
+  buildLevelPanel();
+  panelOverlay.classList.add('open');
+}
+
+function closeLevelPanel() {
+  panelOverlay.classList.remove('open');
+}
+
+// ─── 游戏顶部栏 ───────────────────────────────────────────────────────────
+function updateGameTopBar() {
+  const progress = loadProgress();
+  gameStars.textContent = `⭐ ${progress.stars}`;
+  const level = LEVELS[currentLevelIndex];
+  gameLevelBadge.textContent = `关卡${level.id} · ${level.title}`;
+  const isLast = currentLevelIndex >= LEVELS.length - 1;
+  gameBtnNext.classList.toggle('disabled', isLast);
+}
+
+// ─── 过关弹窗 ─────────────────────────────────────────────────────────────
+function showWinOverlay(levelIndex: number) {
+  const level = LEVELS[levelIndex];
+  const isLast = levelIndex >= LEVELS.length - 1;
+
+  winSub.textContent = `第 ${level.id} 关 · ${level.title}`;
+  winBtnNext.textContent = isLast ? '返回菜单' : '下一关 ▶';
+  updateGameTopBar();
+
+  // 粒子效果
+  spawnParticles(particleCanvas);
+
+  setTimeout(() => {
+    winOverlay.classList.add('show');
+  }, 400);
+
+  winBtnReplay.onclick = () => {
+    hideWinOverlay();
+    game.resetLevel();
+  };
+  winBtnNext.onclick = () => {
+    hideWinOverlay();
+    if (isLast) {
+      showMenu();
+    } else {
+      showGame(levelIndex + 1);
+    }
+  };
+}
+
+function hideWinOverlay() {
+  winOverlay.classList.remove('show');
+}
+
+// ─── 绑定事件 ─────────────────────────────────────────────────────────────
+
+// 菜单按钮
+btnStart.addEventListener('click', () => {
+  const progress = loadProgress();
+  const nextIdx = getNextLevelIndex(progress);
+  showGame(nextIdx);
+});
+
+btnSelect.addEventListener('click', () => openLevelPanel());
+btnResetProg.addEventListener('click', () => {
+  resetProgress();
+  updateMenuUI();
+});
+
+// 关卡面板：点击遮罩关闭
+panelOverlay.addEventListener('click', (e) => {
+  if (e.target === panelOverlay) closeLevelPanel();
+});
+
+// 游戏页按钮
+btnHome.addEventListener('click', () => showMenu());
+
+gameBtnReset.addEventListener('click', () => {
+  hideWinOverlay();
+  game.resetLevel();
+});
+
+gameBtnHint.addEventListener('click', () => game.showHint());
+
+gameBtnNext.addEventListener('click', () => {
+  if (currentLevelIndex < LEVELS.length - 1) {
+    showGame(currentLevelIndex + 1);
+  }
+});
+
+// 游戏过关回调
+game.setOnComplete((levelIndex) => {
+  showWinOverlay(levelIndex);
+});
+
+// ─── 窗口 resize ─────────────────────────────────────────────────────────
+window.addEventListener('resize', () => {
+  game.resize();
+  game.render();
+});
+
+// ─── 启动 ─────────────────────────────────────────────────────────────────
+updateMenuUI();
