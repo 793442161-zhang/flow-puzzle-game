@@ -1,17 +1,22 @@
 import { LEVELS } from './data/levels';
 import { loadProgress, resetProgress } from './game/storage';
 import { Game, spawnParticles } from './game/game';
+import { solvePuzzle } from './game/solver';
 
 // ─── DOM 引用 ─────────────────────────────────────────────────────────────
 const viewMenu   = document.getElementById('view-menu')!;
 const viewGame   = document.getElementById('view-game')!;
+const homeStage  = document.getElementById('home-stage')!;
 
 // 菜单
 const progressLabel = document.getElementById('progress-label')!;
 const progressFill  = document.getElementById('progress-fill')!;
 const btnStart      = document.getElementById('btn-start')!;
+const btnStartLabel = document.getElementById('btn-start-label')!;
 const btnSelect     = document.getElementById('btn-select')!;
 const btnResetProg  = document.getElementById('btn-reset')!;
+const menuStarScore = document.getElementById('menu-star-score')!;
+const homePreviewBoard = document.getElementById('home-preview-board')!;
 
 // 关卡面板
 const panelOverlay  = document.getElementById('panel-overlay')!;
@@ -41,11 +46,28 @@ const particleCanvas = document.getElementById('particle-canvas') as HTMLCanvasE
 const game = new Game(gameCanvas);
 let currentLevelIndex = 0;
 
+const HOME_LEVEL_COLORS = [
+  '#FF6A3D', '#F72585', '#3F7CFF', '#B8FF00',
+  '#B43CFF', '#FF9A3D', '#45D8FF', '#4BF0A6',
+  '#D84CFF', '#5A7BFF',
+];
+const HOME_DESIGN_WIDTH = 375;
+const HOME_DESIGN_HEIGHT = 812;
+
+function updateHomeStageScale() {
+  const scale = Math.min(
+    window.innerWidth / HOME_DESIGN_WIDTH,
+    window.innerHeight / HOME_DESIGN_HEIGHT,
+  );
+  homeStage.style.setProperty('--home-scale', `${scale}`);
+}
+
 // ─── 工具：页面切换 ───────────────────────────────────────────────────────
 function showMenu() {
   viewGame.classList.add('hidden');
   setTimeout(() => {
     viewMenu.classList.remove('hidden');
+    updateHomeStageScale();
     updateMenuUI();
   }, 50);
   hideWinOverlay();
@@ -64,6 +86,77 @@ function showGame(levelIndex: number) {
 }
 
 // ─── 菜单 UI ─────────────────────────────────────────────────────────────
+function getNextLevelIndex() {
+  const progress = loadProgress();
+  return Math.max(0, Math.min(progress.unlockedLevel - 1, LEVELS.length - 1));
+}
+
+function getStarPoints(cx: number, cy: number, outer: number, inner: number) {
+  const points: string[] = [];
+  for (let i = 0; i < 10; i++) {
+    const angle = -Math.PI / 2 + i * Math.PI / 5;
+    const radius = i % 2 === 0 ? outer : inner;
+    points.push(`${cx + Math.cos(angle) * radius},${cy + Math.sin(angle) * radius}`);
+  }
+  return points.join(' ');
+}
+
+function renderHomePreview(levelIndex: number) {
+  const level = LEVELS[levelIndex];
+  const solution = solvePuzzle(level);
+  const path = solution ?? [level.start, level.end];
+  const color = HOME_LEVEL_COLORS[levelIndex % HOME_LEVEL_COLORS.length];
+  const width = 303;
+  const height = 231;
+  const gap = 6;
+  const padding = 10;
+  const cellSize = Math.min(
+    (width - padding * 2 - gap * (level.cols - 1)) / level.cols,
+    (height - padding * 2 - gap * (level.rows - 1)) / level.rows,
+  );
+  const gridW = level.cols * cellSize + (level.cols - 1) * gap;
+  const gridH = level.rows * cellSize + (level.rows - 1) * gap;
+  const boardX = (width - gridW) / 2;
+  const boardY = (height - gridH) / 2;
+  const boardPad = Math.max(8, cellSize * 0.14);
+  const radius = Math.max(12, cellSize * 0.22);
+  const boardRadius = Math.max(18, cellSize * 0.28);
+  const center = ([row, col]: [number, number]) => ({
+    x: boardX + col * (cellSize + gap) + cellSize / 2,
+    y: boardY + row * (cellSize + gap) + cellSize / 2,
+  });
+
+  const cells: string[] = [];
+  for (let r = 0; r < level.rows; r++) {
+    for (let c = 0; c < level.cols; c++) {
+      if (level.grid[r][c] !== 1) continue;
+      const x = boardX + c * (cellSize + gap);
+      const y = boardY + r * (cellSize + gap);
+      cells.push(`<rect x="${x}" y="${y}" width="${cellSize}" height="${cellSize}" rx="${radius}" fill="#f7f1ea" stroke="#d1c4b8" stroke-width="1.2" />`);
+    }
+  }
+
+  const pathPoints = path.map(point => {
+    const { x, y } = center(point);
+    return `${x},${y}`;
+  }).join(' ');
+  const start = center(level.start);
+  const end = center(level.end);
+  const ringRadius = cellSize * 0.25;
+  const star = getStarPoints(end.x, end.y, cellSize * 0.17, cellSize * 0.08);
+
+  homePreviewBoard.innerHTML = `
+    <svg viewBox="0 0 ${width} ${height}" role="img" aria-label="第 ${level.id} 关缩略图">
+      <rect x="${boardX - boardPad}" y="${boardY - boardPad}" width="${gridW + boardPad * 2}" height="${gridH + boardPad * 2}" rx="${boardRadius}" fill="#d8cfc3" />
+      ${cells.join('')}
+      <polyline points="${pathPoints}" fill="none" stroke="${color}" stroke-width="${cellSize * 0.78}" stroke-linecap="round" stroke-linejoin="round" />
+      <circle cx="${start.x}" cy="${start.y}" r="${ringRadius}" fill="none" stroke="#fff" stroke-width="${Math.max(5, cellSize * 0.08)}" />
+      <circle cx="${end.x}" cy="${end.y}" r="${ringRadius}" fill="none" stroke="#fff" stroke-width="${Math.max(5, cellSize * 0.08)}" />
+      <polygon points="${star}" fill="#fff" />
+    </svg>
+  `;
+}
+
 function updateMenuUI() {
   const progress = loadProgress();
   const completed = progress.completedLevels.length;
@@ -72,20 +165,13 @@ function updateMenuUI() {
 
   progressLabel.textContent = `⭐ ${progress.stars} 星 · 已通关 ${completed} / ${total}`;
   progressFill.style.width = `${fillPct}%`;
+  menuStarScore.textContent = `${progress.stars * 125}`;
 
-  const nextIdx = getNextLevelIndex(progress);
-  if (completed > 0) {
-    btnStart.textContent = `继续游戏  第 ${nextIdx + 1} 关  ▶`;
-  } else {
-    btnStart.textContent = '开始游戏  ▶';
-  }
-}
-
-function getNextLevelIndex(progress: ReturnType<typeof loadProgress>): number {
-  for (let i = 0; i < LEVELS.length; i++) {
-    if (!progress.completedLevels.includes(LEVELS[i].id)) return i;
-  }
-  return LEVELS.length - 1;
+  const nextLevelIndex = getNextLevelIndex();
+  const startText = `第 ${LEVELS[nextLevelIndex].id} 关`;
+  btnStartLabel.textContent = startText;
+  btnStart.setAttribute('aria-label', startText);
+  renderHomePreview(nextLevelIndex);
 }
 
 // ─── 关卡面板 ─────────────────────────────────────────────────────────────
@@ -185,9 +271,7 @@ function hideWinOverlay() {
 
 // 菜单按钮
 btnStart.addEventListener('click', () => {
-  const progress = loadProgress();
-  const nextIdx = getNextLevelIndex(progress);
-  showGame(nextIdx);
+  showGame(getNextLevelIndex());
 });
 
 btnSelect.addEventListener('click', () => openLevelPanel());
@@ -228,9 +312,11 @@ game.setOnProgress((progress) => {
 
 // ─── 窗口 resize ─────────────────────────────────────────────────────────
 window.addEventListener('resize', () => {
+  updateHomeStageScale();
   game.resize();
   game.render();
 });
 
 // ─── 启动 ─────────────────────────────────────────────────────────────────
+updateHomeStageScale();
 updateMenuUI();
