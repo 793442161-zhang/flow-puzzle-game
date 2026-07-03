@@ -13,6 +13,7 @@ const LEVEL_COLORS = [
 
 // 设计常量
 const CELL_GAP = 6;
+const DISPLAY_GRID_SIZE = 7;
 const EMPTY_CELL_RADIUS_RATIO = 0.16;
 const PATH_CELL_RADIUS_RATIO = 0.34;
 const BOARD_PADDING_RATIO = 0.25;
@@ -41,6 +42,7 @@ export class Game {
   private gridOffsetX = 0;
   private gridOffsetY = 0;
 
+  private trackProgress = true;
   private onLevelCompleteCallback?: (levelIndex: number) => void;
   private onProgressCallback?: (progress: number) => void;
 
@@ -52,10 +54,11 @@ export class Game {
   }
 
   // ── 加载关卡 ────────────────────────────────────────────────────────────
-  load(levelIndex: number) {
+  load(levelIndex: number, options: { animate?: boolean; trackProgress?: boolean } = {}) {
     this.levelIndex = levelIndex;
     this.level = LEVELS[levelIndex];
     this.state = new GameState(this.level);
+    this.trackProgress = options.trackProgress !== false;
     this.pathColor = LEVEL_COLORS[levelIndex % LEVEL_COLORS.length];
     this.hintSolution = solvePuzzle(this.level);
     this.clearMergePulse();
@@ -64,7 +67,9 @@ export class Game {
     this.resize();
     this.render();
     this.emitProgress();
-    this.playEnterAnimation();
+    if (options.animate !== false) {
+      this.playEnterAnimation();
+    }
   }
 
   // ── 更新尺寸 ─────────────────────────────────────────────────────────────
@@ -74,7 +79,8 @@ export class Game {
     const wrapW = wrap.clientWidth;
     const wrapH = wrap.clientHeight;
 
-    const { rows, cols } = this.level;
+    const rows = this.getDisplayRows();
+    const cols = this.getDisplayCols();
     const maxBoardW = Math.min(wrapW - 36, 394);
     const maxBoardH = Math.min(wrapH - 18, 454);
     const reservedPadding = 24;
@@ -141,12 +147,24 @@ export class Game {
     const { rows, cols, grid } = this.level;
     const s = this.cellSize;
     const r = this.getEmptyCellRadius();
+    const displayRows = this.getDisplayRows();
+    const displayCols = this.getDisplayCols();
+    const { rowOffset, colOffset } = this.getDisplayOffset();
 
-    for (let row = 0; row < rows; row++) {
-      for (let col = 0; col < cols; col++) {
-        if (grid[row][col] !== 1) continue;
+    for (let displayRow = 0; displayRow < displayRows; displayRow++) {
+      for (let displayCol = 0; displayCol < displayCols; displayCol++) {
+        const row = displayRow - rowOffset;
+        const col = displayCol - colOffset;
+        const isInLevel = row >= 0 && row < rows && col >= 0 && col < cols;
+        const isActive = isInLevel && grid[row][col] === 1;
+        const { px, py } = this.displayCellToPixel(displayRow, displayCol);
+
+        if (!isActive) {
+          this.drawInactiveCellTile(px, py, s, r);
+          continue;
+        }
+
         if (excludedCells.has(this.cellKey(row, col))) continue;
-        const { px, py } = this.cellToPixel(row, col);
         this.drawCellTile(px, py, s, r);
       }
     }
@@ -332,6 +350,11 @@ export class Game {
 
   // ── 坐标转换 ─────────────────────────────────────────────────────────────
   private cellToPixel(row: number, col: number) {
+    const { rowOffset, colOffset } = this.getDisplayOffset();
+    return this.displayCellToPixel(row + rowOffset, col + colOffset);
+  }
+
+  private displayCellToPixel(row: number, col: number) {
     return {
       px: this.gridOffsetX + col * (this.cellSize + CELL_GAP),
       py: this.gridOffsetY + row * (this.cellSize + CELL_GAP),
@@ -341,7 +364,10 @@ export class Game {
   private pixelToCell(x: number, y: number) {
     const col = Math.floor((x - this.gridOffsetX + CELL_GAP / 2) / (this.cellSize + CELL_GAP));
     const row = Math.floor((y - this.gridOffsetY + CELL_GAP / 2) / (this.cellSize + CELL_GAP));
-    if (this.state.isValidCell(row, col)) return { row, col };
+    const { rowOffset, colOffset } = this.getDisplayOffset();
+    const levelRow = row - rowOffset;
+    const levelCol = col - colOffset;
+    if (this.state.isValidCell(levelRow, levelCol)) return { row: levelRow, col: levelCol };
     return null;
   }
 
@@ -349,12 +375,15 @@ export class Game {
   private drawCellTile(x: number, y: number, size: number, radius: number) {
     const ctx = this.ctx;
     this.roundRect(x, y, size, size, radius);
-    ctx.fillStyle = '#f7f1ea';
+    ctx.fillStyle = '#F7F1EA';
     ctx.fill();
+  }
 
-    ctx.strokeStyle = '#d0c6ba';
-    ctx.lineWidth = 1.5;
-    ctx.stroke();
+  private drawInactiveCellTile(x: number, y: number, size: number, radius: number) {
+    const ctx = this.ctx;
+    this.roundRect(x, y, size, size, radius);
+    ctx.fillStyle = '#D0C5B7';
+    ctx.fill();
   }
 
   private drawStar(cx: number, cy: number, outerRadius: number, innerRadius: number) {
@@ -426,6 +455,21 @@ export class Game {
 
   private getBoardRadius() {
     return Math.min(this.cellSize * BOARD_RADIUS_RATIO, this.boardPadding + 14, 36);
+  }
+
+  private getDisplayRows() {
+    return Math.max(DISPLAY_GRID_SIZE, this.level.rows);
+  }
+
+  private getDisplayCols() {
+    return Math.max(DISPLAY_GRID_SIZE, this.level.cols);
+  }
+
+  private getDisplayOffset() {
+    return {
+      rowOffset: Math.floor((this.getDisplayRows() - this.level.rows) / 2),
+      colOffset: Math.floor((this.getDisplayCols() - this.level.cols) / 2),
+    };
   }
 
   private drawBoardContents(draw: () => void) {
@@ -578,13 +622,13 @@ export class Game {
     ctx.scale(dpr, dpr);
     this.drawBoardBase();
 
-    const { grid } = this.level;
     const s = this.cellSize;
     const r = this.getEmptyCellRadius();
 
     this.drawBoardContents(() => {
+      this.drawGrid(this.createPathSet(cells));
+
       cells.forEach((cell, i) => {
-        if (!grid[cell.row][cell.col]) return;
         const { px, py } = this.cellToPixel(cell.row, cell.col);
         const cx = px + s / 2, cy = py + s / 2;
         const sc = i < untilIdx ? 1 : (i === untilIdx ? scale : 0);
@@ -607,7 +651,9 @@ export class Game {
 
   // ── 过关处理 ─────────────────────────────────────────────────────────────
   private handleComplete() {
-    completeLevel(this.level.id);
+    if (this.trackProgress) {
+      completeLevel(this.level.id);
+    }
     this.render();
     this.onLevelCompleteCallback?.(this.levelIndex);
   }

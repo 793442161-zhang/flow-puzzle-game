@@ -1,9 +1,15 @@
 const STORAGE_KEY = 'flow_puzzle_progress';
+const SETTINGS_KEY = 'flow_puzzle_settings';
 
 export interface GameProgress {
   unlockedLevel: number; // 最高解锁关卡（从1开始）
   completedLevels: number[]; // 已完成的关卡id列表
   stars: number; // 总星星数（每关最多1颗）
+}
+
+export interface GameSettings {
+  soundEnabled: boolean;
+  musicEnabled: boolean;
 }
 
 export function loadProgress(): GameProgress {
@@ -35,4 +41,20 @@ export function completeLevel(levelId: number): GameProgress {
 
 export function resetProgress(): void {
   localStorage.removeItem(STORAGE_KEY);
+}
+
+export function loadSettings(): GameSettings {
+  try {
+    const raw = localStorage.getItem(SETTINGS_KEY);
+    if (raw) {
+      return { soundEnabled: true, musicEnabled: true, ...JSON.parse(raw) };
+    }
+  } catch (_) {}
+  return { soundEnabled: true, musicEnabled: true };
+}
+
+export function saveSettings(settings: GameSettings): void {
+  try {
+    localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings));
+  } catch (_) {}
 }
