@@ -4,6 +4,7 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
+    "start": "vite --open /flow-puzzle-game/",
     "dev": "vite",
     "build": "tsc && vite build",
     "levels:analyze": "node tools/analyze-levels.mjs",

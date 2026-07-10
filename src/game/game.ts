@@ -2,7 +2,8 @@ import { LEVELS } from '../data/levels';
 import type { LevelData } from '../data/levels';
 import { GameState } from './GameState';
 import { solvePuzzle } from './solver';
-import { completeLevel } from './storage';
+import { completeLevel, getLevelRewardKind, hasSeenTutorial, markTutorialSeen } from './storage';
+import type { CompleteLevelResult, LevelRewardKind } from './storage';
 
 // 每关的主题色
 const LEVEL_COLORS = [
@@ -22,6 +23,7 @@ const MERGE_PULSE_DURATION = 190;
 
 type Cell = { row: number; col: number };
 type MergePulse = { cell: Cell; from: Cell; startedAt: number; duration: number };
+type PathDrawOptions = { alpha?: number; useMergePulse?: boolean };
 
 export class Game {
   private canvas: HTMLCanvasElement;
@@ -36,6 +38,11 @@ export class Game {
   private hintTimers: ReturnType<typeof setTimeout>[] = [];
   private mergePulse: MergePulse | null = null;
   private mergeAnimationFrame: number | null = null;
+  private tutorialAnimationFrame: number | null = null;
+  private tutorialDelayTimer: ReturnType<typeof setTimeout> | null = null;
+  private tutorialActive = false;
+  private tutorialStartedAt = 0;
+  private tutorialPath: Cell[] = [];
 
   private cellSize = 60;
   private boardPadding = 12;
@@ -43,7 +50,7 @@ export class Game {
   private gridOffsetY = 0;
 
   private trackProgress = true;
-  private onLevelCompleteCallback?: (levelIndex: number) => void;
+  private onLevelCompleteCallback?: (levelIndex: number, result: CompleteLevelResult | null) => void;
   private onProgressCallback?: (progress: number) => void;
 
   constructor(canvas: HTMLCanvasElement) {
@@ -55,6 +62,7 @@ export class Game {
 
   // ── 加载关卡 ────────────────────────────────────────────────────────────
   load(levelIndex: number, options: { animate?: boolean; trackProgress?: boolean } = {}) {
+    this.clearTutorialGuide(false, false);
     this.levelIndex = levelIndex;
     this.level = LEVELS[levelIndex];
     this.state = new GameState(this.level);
@@ -69,6 +77,9 @@ export class Game {
     this.emitProgress();
     if (options.animate !== false) {
       this.playEnterAnimation();
+    }
+    if (this.shouldShowTutorial()) {
+      this.scheduleTutorialGuide(options.animate === false ? 180 : 950);
     }
   }
 
@@ -175,13 +186,20 @@ export class Game {
     this.drawPathCells(this.state.pathCells, this.pathColor);
   }
 
-  private drawPathCells(path: Cell[], color: string) {
+  private drawPathCells(path: Cell[], color: string, options: PathDrawOptions = {}) {
     if (path.length === 0) return;
     const ctx = this.ctx;
     const r = this.getPathCellRadius();
     const now = performance.now();
+    const useMergePulse = options.useMergePulse ?? true;
+
+    if ((options.alpha ?? 1) < 1 && !useMergePulse) {
+      this.drawPathCellsAsSingleOverlay(path, color, options.alpha ?? 1);
+      return;
+    }
 
     ctx.save();
+    ctx.globalAlpha = options.alpha ?? 1;
     ctx.fillStyle = color;
 
     for (let i = 0; i < path.length - 1; i++) {
@@ -189,10 +207,40 @@ export class Game {
     }
 
     path.forEach(cell => {
-      const transform = this.getMergeCellTransform(cell, now);
+      const transform = useMergePulse
+        ? this.getMergeCellTransform(cell, now)
+        : { scaleX: 1, scaleY: 1 };
       this.drawPathCell(cell, r, transform.scaleX, transform.scaleY);
     });
     ctx.restore();
+  }
+
+  private drawPathCellsAsSingleOverlay(path: Cell[], color: string, alpha: number) {
+    const width = this.canvas.width / this.dpr;
+    const height = this.canvas.height / this.dpr;
+    const overlay = document.createElement('canvas');
+    overlay.width = Math.round(width * this.dpr);
+    overlay.height = Math.round(height * this.dpr);
+
+    const overlayCtx = overlay.getContext('2d')!;
+    overlayCtx.scale(this.dpr, this.dpr);
+    overlayCtx.fillStyle = color;
+    this.drawPathCellsToContext(overlayCtx, path, this.getPathCellRadius());
+
+    this.ctx.save();
+    this.ctx.globalAlpha = alpha;
+    this.ctx.drawImage(overlay, 0, 0, width, height);
+    this.ctx.restore();
+  }
+
+  private drawPathCellsToContext(ctx: CanvasRenderingContext2D, path: Cell[], radius: number) {
+    for (let i = 0; i < path.length - 1; i++) {
+      this.drawPathConnectorToContext(ctx, path[i], path[i + 1], radius);
+    }
+
+    path.forEach(cell => {
+      this.drawPathCellToContext(ctx, cell, radius);
+    });
   }
 
   // ── 起终点标记 ───────────────────────────────────────────────────────────
@@ -234,13 +282,12 @@ export class Game {
     ctx.arc(ex, ey, ringR, 0, Math.PI * 2);
     ctx.stroke();
     ctx.fillStyle = '#fff';
-    this.drawStar(ex, ey + s * 0.01, s * 0.2, s * 0.09);
-    ctx.fill();
+    this.drawRewardIcon(ex, ey, s, getLevelRewardKind(this.level.id));
     ctx.restore();
   }
 
   // ── 提示路径渲染 ─────────────────────────────────────────────────────────
-  private renderHintPath(path: [number, number][], color: string) {
+  private renderHintPath(path: [number, number][], color: string, alpha = 0.78) {
     const ctx = this.ctx;
     const dpr = this.dpr;
     ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
@@ -249,8 +296,9 @@ export class Game {
     const hintPath = path.map(([row, col]) => ({ row, col }));
     this.drawBoardBase();
     this.drawBoardContents(() => {
-      this.drawGrid(this.createPathSet(hintPath));
-      this.drawPathCells(hintPath, color);
+      this.drawGrid(this.createPathSet(this.state.pathCells));
+      this.drawPath();
+      this.drawPathCells(hintPath, color, { alpha, useMergePulse: false });
       this.drawDots();
     });
     ctx.restore();
@@ -276,7 +324,11 @@ export class Game {
 
     const onStart = (clientX: number, clientY: number) => {
       if (!this.state || this.state.isComplete) return;
+      if (this.tutorialActive || this.tutorialDelayTimer) {
+        this.clearTutorialGuide(true, false);
+      }
       this.clearHintTimers();
+      this.render();
       const cell = getCell(clientX, clientY);
       if (!cell) return;
       if (this.state.startDrag(cell.row, cell.col)) {
@@ -386,18 +438,49 @@ export class Game {
     ctx.fill();
   }
 
-  private drawStar(cx: number, cy: number, outerRadius: number, innerRadius: number) {
+  private drawRewardIcon(cx: number, cy: number, size: number, kind: LevelRewardKind) {
     const ctx = this.ctx;
-    ctx.beginPath();
-    for (let i = 0; i < 10; i++) {
-      const radius = i % 2 === 0 ? outerRadius : innerRadius;
-      const angle = -Math.PI / 2 + i * Math.PI / 5;
-      const x = cx + Math.cos(angle) * radius;
-      const y = cy + Math.sin(angle) * radius;
-      if (i === 0) ctx.moveTo(x, y);
-      else ctx.lineTo(x, y);
+    const scale = size / 60;
+
+    if (kind === 'coin') {
+      ctx.beginPath();
+      ctx.ellipse(cx, cy, 9 * scale, 12 * scale, 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.save();
+      ctx.strokeStyle = this.pathColor;
+      ctx.lineWidth = Math.max(2, 4 * scale);
+      ctx.beginPath();
+      ctx.moveTo(cx, cy - 7 * scale);
+      ctx.lineTo(cx, cy + 7 * scale);
+      ctx.stroke();
+      ctx.restore();
+      return;
     }
+
+    if (kind === 'gift') {
+      const w = 24 * scale;
+      const h = 18 * scale;
+      this.roundRect(cx - w / 2, cy - h / 2 + 2 * scale, w, h, 5 * scale);
+      ctx.fill();
+      ctx.fillRect(cx - 2 * scale, cy - h / 2 + 2 * scale, 4 * scale, h);
+      ctx.fillRect(cx - w / 2, cy - 2 * scale, w, 4 * scale);
+      ctx.beginPath();
+      ctx.arc(cx - 5 * scale, cy - 11 * scale, 5 * scale, 0, Math.PI * 2);
+      ctx.arc(cx + 5 * scale, cy - 11 * scale, 5 * scale, 0, Math.PI * 2);
+      ctx.fill();
+      return;
+    }
+
+    const bowlW = 25 * scale;
+    const bowlH = 14 * scale;
+    ctx.beginPath();
+    ctx.ellipse(cx, cy + 3 * scale, bowlW / 2, bowlH / 2, 0, 0, Math.PI);
+    ctx.lineTo(cx - bowlW / 2, cy + 3 * scale);
     ctx.closePath();
+    ctx.fill();
+    ctx.beginPath();
+    ctx.ellipse(cx, cy - 4 * scale, 7 * scale, 4 * scale, 0, 0, Math.PI * 2);
+    ctx.fill();
   }
 
   private clamp(value: number, min: number, max: number) {
@@ -405,7 +488,10 @@ export class Game {
   }
 
   private drawPathConnector(a: Cell, b: Cell, radius: number) {
-    const ctx = this.ctx;
+    this.drawPathConnectorToContext(this.ctx, a, b, radius);
+  }
+
+  private drawPathConnectorToContext(ctx: CanvasRenderingContext2D, a: Cell, b: Cell, radius: number) {
     const s = this.cellSize;
     const ap = this.cellToPixel(a.row, a.col);
     const bp = this.cellToPixel(b.row, b.col);
@@ -420,7 +506,16 @@ export class Game {
   }
 
   private drawPathCell(cell: Cell, radius: number, scaleX = 1, scaleY = scaleX) {
-    const ctx = this.ctx;
+    this.drawPathCellToContext(this.ctx, cell, radius, scaleX, scaleY);
+  }
+
+  private drawPathCellToContext(
+    ctx: CanvasRenderingContext2D,
+    cell: Cell,
+    radius: number,
+    scaleX = 1,
+    scaleY = scaleX,
+  ) {
     const s = this.cellSize;
     const { px, py } = this.cellToPixel(cell.row, cell.col);
     const cx = px + s / 2;
@@ -432,7 +527,7 @@ export class Game {
       ctx.scale(scaleX, scaleY);
       ctx.translate(-cx, -cy);
     }
-    this.roundRect(px, py, s, s, radius);
+    this.roundRectForContext(ctx, px, py, s, s, radius);
     ctx.fill();
     ctx.restore();
   }
@@ -562,7 +657,17 @@ export class Game {
   }
 
   private roundRect(x: number, y: number, w: number, h: number, r: number) {
-    const ctx = this.ctx;
+    this.roundRectForContext(this.ctx, x, y, w, h, r);
+  }
+
+  private roundRectForContext(
+    ctx: CanvasRenderingContext2D,
+    x: number,
+    y: number,
+    w: number,
+    h: number,
+    r: number,
+  ) {
     ctx.beginPath();
     if (ctx.roundRect) {
       ctx.roundRect(x, y, w, h, r);
@@ -651,20 +756,29 @@ export class Game {
 
   // ── 过关处理 ─────────────────────────────────────────────────────────────
   private handleComplete() {
+    let result: CompleteLevelResult | null = null;
     if (this.trackProgress) {
-      completeLevel(this.level.id);
+      result = completeLevel(this.level.id);
     }
     this.render();
-    this.onLevelCompleteCallback?.(this.levelIndex);
+    this.onLevelCompleteCallback?.(this.levelIndex, result);
   }
 
-  setOnComplete(cb: (levelIndex: number) => void) {
+  setOnComplete(cb: (levelIndex: number, result: CompleteLevelResult | null) => void) {
     this.onLevelCompleteCallback = cb;
   }
 
   setOnProgress(cb: (progress: number) => void) {
     this.onProgressCallback = cb;
     this.emitProgress();
+  }
+
+  canUseHint() {
+    return Boolean(this.hintSolution && this.state && !this.state.isComplete);
+  }
+
+  dismissTutorial(markSeen = false) {
+    this.clearTutorialGuide(markSeen);
   }
 
   // ── 公共操作 ─────────────────────────────────────────────────────────────
@@ -677,26 +791,38 @@ export class Game {
   }
 
   showHint() {
-    if (!this.hintSolution) return;
+    if (this.tutorialActive || this.tutorialDelayTimer) {
+      this.clearTutorialGuide(true, false);
+    }
+    if (!this.hintSolution || !this.state || this.state.isComplete) return;
     this.clearHintTimers();
     this.clearMergePulse();
-    this.state.applyHint(this.hintSolution);
-    this.emitProgress();
     const solution = this.hintSolution;
     const hintColor = this.pathColor;
+    const revealInterval = 28;
+    const flashInterval = 130;
 
-    for (let i = 0; i <= solution.length; i++) {
+    for (let i = 0; i < solution.length; i++) {
       const t = setTimeout(() => {
-        if (i === solution.length) {
-          if (this.state.isComplete) {
-            setTimeout(() => this.handleComplete(), 400);
-          }
-          return;
-        }
-        this.renderHintPath(solution.slice(0, i + 1), hintColor);
-      }, i * 150);
+        this.renderHintPath(solution.slice(0, i + 1), hintColor, 0.78);
+      }, i * revealInterval);
       this.hintTimers.push(t);
     }
+
+    const flashAlphas = [0.92, 0.24, 0.82, 0.22, 0.62, 0.38, 0.18];
+    const flashStart = solution.length * revealInterval + 150;
+    flashAlphas.forEach((alpha, index) => {
+      const t = setTimeout(() => {
+        this.renderHintPath(solution, hintColor, alpha);
+      }, flashStart + index * flashInterval);
+      this.hintTimers.push(t);
+    });
+
+    const finish = setTimeout(() => {
+      this.render();
+      this.hintTimers = [];
+    }, flashStart + flashAlphas.length * flashInterval + 80);
+    this.hintTimers.push(finish);
   }
 
   nextLevel(): number {
@@ -711,6 +837,220 @@ export class Game {
     this.hintTimers = [];
   }
 
+  private shouldShowTutorial() {
+    return this.levelIndex === 0 && !hasSeenTutorial();
+  }
+
+  private scheduleTutorialGuide(delay: number) {
+    if (this.tutorialDelayTimer) clearTimeout(this.tutorialDelayTimer);
+    this.tutorialDelayTimer = setTimeout(() => {
+      this.tutorialDelayTimer = null;
+      this.startTutorialGuide();
+    }, delay);
+  }
+
+  private startTutorialGuide() {
+    if (!this.shouldShowTutorial() || !this.hintSolution || !this.state || this.state.pathCells.length > 0) {
+      return;
+    }
+
+    const previewLength = Math.min(4, this.hintSolution.length);
+    if (previewLength < 2) return;
+
+    this.tutorialPath = this.hintSolution
+      .slice(0, previewLength)
+      .map(([row, col]) => ({ row, col }));
+    this.tutorialStartedAt = performance.now();
+    this.tutorialActive = true;
+    this.startTutorialAnimationLoop();
+  }
+
+  private startTutorialAnimationLoop() {
+    if (this.tutorialAnimationFrame !== null) return;
+
+    const tick = (now: number) => {
+      this.tutorialAnimationFrame = null;
+      if (!this.tutorialActive) return;
+
+      this.render();
+      this.drawTutorialGuide(now);
+      this.tutorialAnimationFrame = requestAnimationFrame(tick);
+    };
+
+    this.tutorialAnimationFrame = requestAnimationFrame(tick);
+  }
+
+  private clearTutorialGuide(markSeen = false, rerender = true) {
+    if (markSeen) markTutorialSeen();
+
+    const hadVisibleGuide = this.tutorialActive;
+    this.tutorialActive = false;
+    this.tutorialStartedAt = 0;
+    this.tutorialPath = [];
+
+    if (this.tutorialDelayTimer) {
+      clearTimeout(this.tutorialDelayTimer);
+      this.tutorialDelayTimer = null;
+    }
+
+    if (this.tutorialAnimationFrame !== null) {
+      cancelAnimationFrame(this.tutorialAnimationFrame);
+      this.tutorialAnimationFrame = null;
+    }
+
+    if (rerender && hadVisibleGuide && this.level && this.state) {
+      this.render();
+    }
+  }
+
+  private drawTutorialGuide(now: number) {
+    if (this.tutorialPath.length < 2) return;
+
+    const ctx = this.ctx;
+    const width = this.canvas.width / this.dpr;
+    const height = this.canvas.height / this.dpr;
+    const elapsed = now - this.tutorialStartedAt;
+    const cycleDuration = 3400;
+    const cycleProgress = (elapsed % cycleDuration) / cycleDuration;
+    const travelProgress = this.clamp(cycleProgress / 0.68, 0, 1);
+    const fade =
+      cycleProgress < 0.74
+        ? 1
+        : this.clamp(1 - (cycleProgress - 0.74) / 0.2, 0, 1);
+    const easedTravel = this.easeInOutCubic(travelProgress);
+    const visibleCells = Math.max(
+      1,
+      Math.min(
+        this.tutorialPath.length,
+        Math.ceil(easedTravel * (this.tutorialPath.length - 1)) + 1,
+      ),
+    );
+    const startCenter = this.getCellCenter(this.tutorialPath[0]);
+    const touchPoint = this.getTutorialPoint(easedTravel);
+
+    ctx.save();
+    ctx.scale(this.dpr, this.dpr);
+
+    this.drawBoardContents(() => {
+      ctx.fillStyle = `rgba(29, 29, 29, ${0.11 * fade})`;
+      ctx.fillRect(0, 0, width, height);
+      this.drawPathCells(this.tutorialPath.slice(0, visibleCells), this.pathColor, {
+        alpha: 0.44 * fade,
+        useMergePulse: false,
+      });
+    });
+
+    this.drawTutorialLabel(width, height, startCenter, fade);
+    this.drawTutorialStartPulse(startCenter, elapsed, fade);
+    this.drawTutorialTouchPoint(touchPoint, fade);
+
+    ctx.restore();
+  }
+
+  private drawTutorialLabel(width: number, height: number, startCenter: { x: number; y: number }, alpha: number) {
+    const ctx = this.ctx;
+    const text = '按住圆点，拖满格子';
+    const fontSize = Math.max(13, Math.min(16, Math.round(this.cellSize * 0.22)));
+    ctx.save();
+    ctx.font = `900 ${fontSize}px -apple-system, BlinkMacSystemFont, "PingFang SC", sans-serif`;
+    const textWidth = ctx.measureText(text).width;
+    const labelW = textWidth + 28;
+    const labelH = fontSize + 18;
+    const labelX = (width - labelW) / 2;
+    const labelY = this.clamp(startCenter.y - this.cellSize * 1.2, 12, height - labelH - 12);
+
+    ctx.globalAlpha = alpha;
+    ctx.shadowColor = 'rgba(0, 0, 0, 0.18)';
+    ctx.shadowBlur = 10;
+    ctx.shadowOffsetY = 4;
+    this.roundRectForContext(ctx, labelX, labelY, labelW, labelH, labelH / 2);
+    ctx.fillStyle = '#1D1D1D';
+    ctx.fill();
+
+    ctx.shadowColor = 'transparent';
+    ctx.fillStyle = '#FFFFFF';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(text, width / 2, labelY + labelH / 2 + 1);
+    ctx.restore();
+  }
+
+  private drawTutorialStartPulse(center: { x: number; y: number }, elapsed: number, alpha: number) {
+    const ctx = this.ctx;
+    const pulse = (Math.sin((elapsed / 760) * Math.PI * 2) + 1) / 2;
+    const radius = this.cellSize * (0.34 + pulse * 0.12);
+    const lineWidth = Math.max(4, this.cellSize * 0.07);
+
+    ctx.save();
+    ctx.globalAlpha = alpha;
+    ctx.shadowColor = 'rgba(255, 255, 255, 0.55)';
+    ctx.shadowBlur = 14;
+    ctx.strokeStyle = '#FFFFFF';
+    ctx.lineWidth = lineWidth;
+    ctx.beginPath();
+    ctx.arc(center.x, center.y, radius, 0, Math.PI * 2);
+    ctx.stroke();
+
+    ctx.shadowColor = 'transparent';
+    ctx.strokeStyle = this.pathColor;
+    ctx.globalAlpha = alpha * (0.3 + pulse * 0.35);
+    ctx.lineWidth = Math.max(2, lineWidth * 0.38);
+    ctx.beginPath();
+    ctx.arc(center.x, center.y, radius + this.cellSize * 0.12, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  private drawTutorialTouchPoint(point: { x: number; y: number }, alpha: number) {
+    const ctx = this.ctx;
+    const radius = this.cellSize * 0.13;
+
+    ctx.save();
+    ctx.globalAlpha = alpha;
+    ctx.shadowColor = 'rgba(255, 232, 91, 0.5)';
+    ctx.shadowBlur = 14;
+    ctx.fillStyle = '#FFFFFF';
+    ctx.beginPath();
+    ctx.arc(point.x, point.y, radius, 0, Math.PI * 2);
+    ctx.fill();
+
+    ctx.shadowColor = 'transparent';
+    ctx.strokeStyle = this.pathColor;
+    ctx.lineWidth = Math.max(2, this.cellSize * 0.045);
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  private getCellCenter(cell: Cell) {
+    const { px, py } = this.cellToPixel(cell.row, cell.col);
+    return {
+      x: px + this.cellSize / 2,
+      y: py + this.cellSize / 2,
+    };
+  }
+
+  private getTutorialPoint(progress: number) {
+    if (this.tutorialPath.length === 1) return this.getCellCenter(this.tutorialPath[0]);
+
+    const segmentCount = this.tutorialPath.length - 1;
+    const rawIndex = this.clamp(progress, 0, 1) * segmentCount;
+    const index = Math.min(segmentCount - 1, Math.floor(rawIndex));
+    const segmentProgress = rawIndex - index;
+    const from = this.getCellCenter(this.tutorialPath[index]);
+    const to = this.getCellCenter(this.tutorialPath[index + 1]);
+
+    return {
+      x: from.x + (to.x - from.x) * segmentProgress,
+      y: from.y + (to.y - from.y) * segmentProgress,
+    };
+  }
+
+  private easeInOutCubic(t: number) {
+    return t < 0.5
+      ? 4 * t * t * t
+      : 1 - Math.pow(-2 * t + 2, 3) / 2;
+  }
+
   private emitProgress() {
     if (!this.state) return;
     const total = this.state.getTotalCells();
@@ -723,8 +1063,14 @@ export class Game {
 export function spawnParticles(canvas: HTMLCanvasElement) {
   const ctx = canvas.getContext('2d')!;
   const dpr = window.devicePixelRatio || 1;
-  canvas.width = window.innerWidth * dpr;
-  canvas.height = window.innerHeight * dpr;
+  const parentRect = canvas.parentElement?.getBoundingClientRect();
+  const width = parentRect?.width || window.innerWidth;
+  const height = parentRect?.height || window.innerHeight;
+  canvas.style.width = `${width}px`;
+  canvas.style.height = `${height}px`;
+  canvas.width = Math.round(width * dpr);
+  canvas.height = Math.round(height * dpr);
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
 
   const colors = ['#FF7043', '#FFD54F', '#4FC3F7', '#AB47BC', '#66BB6A', '#FF5252', '#FFCA28'];
   interface Particle {
@@ -736,17 +1082,17 @@ export function spawnParticles(canvas: HTMLCanvasElement) {
   }
   const particles: Particle[] = [];
 
-  const cx = canvas.width / 2;
-  const cy = canvas.height * 0.45;
+  const cx = width / 2;
+  const cy = height * 0.38;
 
   for (let i = 0; i < 32; i++) {
     const angle = Math.random() * Math.PI * 2;
-    const speed = (180 + Math.random() * 260) * dpr;
+    const speed = 180 + Math.random() * 260;
     particles.push({
       x: cx, y: cy,
       vx: Math.cos(angle) * speed,
-      vy: Math.sin(angle) * speed - 100 * dpr,
-      size: (7 + Math.random() * 10) * dpr,
+      vy: Math.sin(angle) * speed - 100,
+      size: 7 + Math.random() * 10,
       color: colors[i % colors.length],
       alpha: 1,
       type: i % 3,
@@ -759,13 +1105,13 @@ export function spawnParticles(canvas: HTMLCanvasElement) {
     const dt = Math.min((now - lastTime) / 1000, 0.05);
     lastTime = now;
 
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    ctx.clearRect(0, 0, width, height);
     let alive = false;
 
     for (const p of particles) {
       p.x += p.vx * dt;
       p.y += p.vy * dt;
-      p.vy += 400 * dpr * dt; // gravity
+      p.vy += 400 * dt; // gravity
       p.life -= dt * 1.2;
       p.alpha = Math.max(0, p.life);
 
@@ -793,7 +1139,7 @@ export function spawnParticles(canvas: HTMLCanvasElement) {
     }
 
     if (alive) requestAnimationFrame(animate);
-    else ctx.clearRect(0, 0, canvas.width, canvas.height);
+    else ctx.clearRect(0, 0, width, height);
   };
   requestAnimationFrame(animate);
 }

@@ -149,14 +149,6 @@ export class GameState {
     return null;
   }
 
-  /** 应用提示路径 */
-  applyHint(hintPath: [number, number][]): void {
-    this.path = hintPath.map(([row, col]) => ({ row, col }));
-    this.visitedSet = new Set(hintPath.map(([r, c]) => `${r},${c}`));
-    this._isDragging = false;
-    this._isComplete = this.checkComplete();
-  }
-
   /** 获取有效格子总数 */
   getTotalCells(): number {
     const { rows, cols, grid } = this.level;
