@@ -130,7 +130,16 @@ type GameLoadOptions = {
   trackProgress?: boolean;
 };
 
+function updateViewportSize() {
+  const viewport = window.visualViewport;
+  const width = viewport?.width ?? window.innerWidth;
+  const height = viewport?.height ?? window.innerHeight;
+  document.documentElement.style.setProperty('--app-viewport-width', `${width}px`);
+  document.documentElement.style.setProperty('--app-viewport-height', `${height}px`);
+}
+
 function updateHomeStageScale() {
+  updateViewportSize();
   const rect = appRoot.getBoundingClientRect();
   const scale = Math.min(
     rect.width / HOME_DESIGN_WIDTH,
@@ -984,11 +993,15 @@ game.setOnProgress((progress) => {
 });
 
 // ─── 窗口 resize ─────────────────────────────────────────────────────────
-window.addEventListener('resize', () => {
+function handleViewportResize() {
   updateHomeStageScale();
   game.resize();
   game.render();
-});
+}
+
+window.addEventListener('resize', handleViewportResize);
+window.visualViewport?.addEventListener('resize', handleViewportResize);
+window.visualViewport?.addEventListener('scroll', handleViewportResize);
 
 // ─── 启动 ─────────────────────────────────────────────────────────────────
 updateHomeStageScale();
